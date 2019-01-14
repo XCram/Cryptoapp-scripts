@@ -23,5 +23,5 @@ def main_cycle():
 
 if __name__ == '__main__':
   while True:
-    time.sleep(CONF_TIMEOUT) #delay
     main_cycle()
+    time.sleep(CONF_TIMEOUT) #delay
