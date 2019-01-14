@@ -22,6 +22,6 @@ def main_cycle():
     pass
 
 if __name__ == '__main__':
-  While True:
+  while True:
     time.sleep(CONF_TIMEOUT) #delay
     main_cycle()
