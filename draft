@@ -1,11 +1,27 @@
+import time
 from binance.client import Client
 
+#constants
+INDICATORS = ('ADX', 'RSI', 'MACD', 'ATR')
+
 #config part
-INDICATORS = ['ADX', 'RSI', 'MACD', 'ATR']
 CONF_API_KEY = 'xxx'
 CONF_SECRET_KEY = 'yyy'
+CONF_TIMEOUT = 10
 
 #init client
 client = Client(CONF_API_KEY, CONF_SECRET_KEY)
-  
-  
+KLINE_INTERVALS = (client.KLINE_INTERVAL_1MINUTE, client.KLINE_INTERVAL_1HOUR, client.KLINE_INTERVAL_1DAY, client.KLINE_INTERVAL_1MONTH)
+
+#main cycle
+def main_cycle():
+  binance_status = client.get_system_status()
+  if binance_status['status'] == 0:
+    full_stats_24h_list = client.get_ticker() #all tickers full stats 24h
+  else:
+    pass
+
+if __name__ == '__main__':
+  While True:
+    time.sleep(CONF_TIMEOUT) #delay
+    main_cycle()
