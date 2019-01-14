@@ -1,10 +1,12 @@
 import time
 import config
+import requests
 #import logging
 from binance.client import Client
 
 #constants
 INDICATORS = ('ADX', 'RSI', 'MACD', 'ATR')
+OUTSOURCE_URLS = ('First', 'Second', 'etc') #In case we need them
 
 #config part
 CONF_LOG_FILENAME = config.Main.log_filename
@@ -19,6 +21,11 @@ CONF_TIMEOUT = config.Main.timeout
 #init client
 client = Client(CONF_API_KEY, CONF_SECRET_KEY)
 KLINE_INTERVALS = (client.KLINE_INTERVAL_1MINUTE, client.KLINE_INTERVAL_1HOUR, client.KLINE_INTERVAL_1DAY, client.KLINE_INTERVAL_1MONTH)
+
+#Request outsource data
+def get_outsource_data(api_url, opt_params=None, **data_dict):
+  response = requests.get(api_url, opt_params, **data_dict)
+  return response.json()
 
 #main cycle
 def main_cycle():
