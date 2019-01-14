@@ -1,13 +1,20 @@
 import time
+import config
+#import logging
 from binance.client import Client
 
 #constants
 INDICATORS = ('ADX', 'RSI', 'MACD', 'ATR')
 
 #config part
-CONF_API_KEY = 'xxx'
-CONF_SECRET_KEY = 'yyy'
-CONF_TIMEOUT = 10
+CONF_LOG_FILENAME = config.Main.log_filename
+CONF_API_KEY = config.Binance.api_key
+CONF_SECRET_KEY = config.Binance.api_secret
+CONF_TIMEOUT = config.Main.timeout
+
+#log settings
+
+# logging.basicConfig(level = logging.DEBUG, format = u'[%(asctime)-4s]%(process)s %(levelname)-4s %(messages)s', filename = CONF_LOG_FILENAME)
 
 #init client
 client = Client(CONF_API_KEY, CONF_SECRET_KEY)
@@ -16,9 +23,12 @@ KLINE_INTERVALS = (client.KLINE_INTERVAL_1MINUTE, client.KLINE_INTERVAL_1HOUR, c
 #main cycle
 def main_cycle():
   binance_status = client.get_system_status()
+  # logging.info('Get status from binance server')
+  # logging.info('Binance server status is %s'%binance_status['msg'])
   if binance_status['status'] == 0:
     full_stats_24h_list = client.get_ticker() #all tickers full stats 24h
   else:
+    # logging.info('Prices on Binance isn\'t available')
     pass
 
 if __name__ == '__main__':
