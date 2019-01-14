@@ -1,0 +1,11 @@
+from binance.client import Client
+
+#config part
+INDICATORS = ['ADX', 'RSI', 'MACD', 'ATR']
+CONF_API_KEY = 'xxx'
+CONF_SECRET_KEY = 'yyy'
+
+#init client
+client = Client(CONF_API_KEY, CONF_SECRET_KEY)
+  
+  
