@@ -5,6 +5,11 @@ import requests
 from binance.client import Client
 
 #constants
+KRAKEN_PUBLIC_SERVER = 'https://api.kraken.com/0/public'
+KRAKEN_METHODS = {'tickers' : '/AssetPairs', 'history' : '/OHLC'}
+KRAKEN_INTERVALS = {'minute' : 1, 'hour' : 60, 'day' : 1440, 'week' : 10080, 'year' : 21600}
+KRAKEN_NAME = 'Kraken'
+
 INDICATORS = ('ADX', 'RSI', 'MACD', 'ATR')
 EXT_SOURCE_URLS = ('First', 'Second', 'etc') #In case we need them
 
@@ -20,12 +25,45 @@ CONF_TIMEOUT = config.Main.timeout
 
 #init client
 client = Client(CONF_API_KEY, CONF_SECRET_KEY)
-KLINE_INTERVALS = (client.KLINE_INTERVAL_1MINUTE, client.KLINE_INTERVAL_1HOUR, client.KLINE_INTERVAL_1DAY, client.KLINE_INTERVAL_1MONTH)
+BINANCE_INTERVALS = {'minute' : client.KLINE_INTERVAL_1MINUTE, 'hour' : client.KLINE_INTERVAL_1HOUR, 'day' : client.KLINE_INTERVAL_1DAY, 'week' : client.KLINE_INTERVAL_1WEEK, 'month' : client.KLINE_INTERVAL_1MONTH}
 
 #Request external sources
-def get_ext_sources_data(api_url, opt_params=None, **data_dict):
-  response = requests.get(api_url, opt_params, **data_dict)
-  return response.json()
+def get_ext_sources_data(api_url, source_name, method=None, opt_params=None, **data_dict):
+  req_url = api_url
+  if method:
+    req_url += method
+  response = requests.get(req_url, opt_params, **data_dict)
+  if response.status_code == requests.codes.ok:
+    resp_result = response.json()
+    # logging.info('Connect to %s: success'%source_name)
+    return resp_result
+  else:
+    # logging.info('Connect to %s: failure'%source_name)
+    # logging.info('Connect to %s: error %d'%(source_name, response.status_code))
+    return response.status_code
+
+#Get historical data from Kraken
+def get_Kraken_OHLC_data(ticker, interval, since=None):
+  add_data = OrderedDict([('pair', ticker),('interval', interval)])
+  kr_req = get_ext_sources_data(KRAKEN_PUBLIC_SERVER, KRAKEN_NAME, method=KRAKEN_METHODS['history'], opt_params=add_data)
+  return kr_req
+
+def get_Kraken_tickers():
+  kr_req = get_ext_sources_data(KRAKEN_PUBLIC_SERVER, KRAKEN_NAME, method=KRAKEN_METHODS['tickers'])
+  res_list = [x for x in kr_req['result'].keys() if x.find('.') == -1]
+  return res_list
+
+def get_Binance_tickers():
+  bn_req = client.get_all_tickers()
+  tickers_list = []
+  for i in range(len(bn_req)):
+    tickers_list.append(bn_req[i]['symbol'])
+  return tickers_list
+
+def make_kraken_binance_intersection_list(kraken_list, binance_list):
+  kraken_list.extend(binance_list)
+  new_list = set([x for x in kraken_list if kraken_list.count(x) > 1])
+  return list(new_list)
 
 #main cycle
 def main_cycle():
