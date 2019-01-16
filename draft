@@ -3,6 +3,7 @@ import config
 import requests
 #import logging
 from binance.client import Client
+from collections import OrderedDict
 
 #constants
 KRAKEN_PUBLIC_SERVER = 'https://api.kraken.com/0/public'
