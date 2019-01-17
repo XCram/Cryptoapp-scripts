@@ -43,11 +43,12 @@ BINANCE_INTERVALS = {'minute' : client.KLINE_INTERVAL_1MINUTE, 'hour' : client.K
 #input: datetime, not a string!, year_shift (int), month_shift (int)
 #output: datetime, not a string!
 def get_shifted_from_datetime_to_past(present_date, year_shift, month_shift):
+  m_shift = max(0, min(month_shift, 11))
   cur_month = present_date.month
   cur_year = present_date.year
   shifted_month = lambda x, y: x if x > y else x - y + 12
   shifted_year = lambda x, y, z: x if y > z else x - 1
-  output_date = datetime.date(shifted_year(cur_year, cur_month, month_shift), shifted_month(cur_month, month_shift), present_date.day)
+  output_date = datetime.date(shifted_year(cur_year, cur_month, m_shift), shifted_month(cur_month, month_shift), present_date.day)
   return output_date
 
 #input: datetime, not a string!
