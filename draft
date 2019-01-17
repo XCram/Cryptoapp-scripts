@@ -48,7 +48,7 @@ def get_shifted_from_datetime_to_past(present_date, year_shift, month_shift):
   cur_year = present_date.year
   shifted_month = lambda x, y: x if x > y else x - y + 12
   shifted_year = lambda x, y, z: x if y > z else x - 1
-  output_date = datetime.date(shifted_year(cur_year, cur_month, m_shift), shifted_month(cur_month, month_shift), present_date.day)
+  output_date = datetime.date(shifted_year(cur_year, cur_month, m_shift), shifted_month(cur_month, m_shift), present_date.day)
   return output_date
 
 #input: datetime, not a string!
