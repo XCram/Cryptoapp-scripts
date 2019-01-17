@@ -1,4 +1,5 @@
 import time
+import datetime
 import config
 import requests
 #import logging
@@ -6,13 +7,22 @@ from binance.client import Client
 from collections import OrderedDict
 
 #constants
+PRESENT_DATE = datetime.date.today() #'%Y-%m-%d'
+
 KRAKEN_PUBLIC_SERVER = 'https://api.kraken.com/0/public'
-KRAKEN_METHODS = {'tickers' : '/AssetPairs', 'history' : '/OHLC'}
+KRAKEN_METHODS = {'tickers' : '/AssetPairs', 'history' : '/OHLC', 'ticker_stat_24h' : '/Ticker'}
 KRAKEN_INTERVALS = {'minute' : 1, 'hour' : 60, 'day' : 1440, 'week' : 10080, 'year' : 21600}
 KRAKEN_NAME = 'Kraken'
 
+BINANCE_PUBLIC_SERVER = 'https://api.binance.com'
+BINANCE_METHODS = {'tickers' : '/api/v3/ticker/price', 'history' : '/api/v1/klines'}
+BINANCE_NAME = 'Binance'
+
+#PANDAS_DATASOURCES = ('iex', 'yahoo', 'robinhood', 'quandl')
+
+MAIN_TICKERS = {BINANCE_NAME : ('BTCUSDT', 'ETHUSDT', 'LTCUSDT', 'XRPUSDT', 'EOSUSDT', 'XLMUSDT', 'ADAUSDT', 'BCHABCUSDT'), KRAKEN_NAME : ('XXBTZUSD', 'XETHZUSD', 'XLTCZUSD', 'XXRPZUSD', 'EOSUSD', 'XXLMZUSD', 'ADAUSD', 'BCHUSD')}
+
 INDICATORS = ('ADX', 'RSI', 'MACD', 'ATR')
-EXT_SOURCE_URLS = ('First', 'Second', 'etc') #In case we need them
 
 #config part
 CONF_LOG_FILENAME = config.Main.log_filename
@@ -24,10 +34,37 @@ CONF_TIMEOUT = config.Main.timeout
 
 # logging.basicConfig(level = logging.DEBUG, format = u'[%(asctime)-4s]%(process)s %(levelname)-4s %(messages)s', filename = CONF_LOG_FILENAME)
 
-#init client
+#init Binance client
 client = Client(CONF_API_KEY, CONF_SECRET_KEY)
 BINANCE_INTERVALS = {'minute' : client.KLINE_INTERVAL_1MINUTE, 'hour' : client.KLINE_INTERVAL_1HOUR, 'day' : client.KLINE_INTERVAL_1DAY, 'week' : client.KLINE_INTERVAL_1WEEK, 'month' : client.KLINE_INTERVAL_1MONTH}
 
+#####################################################DATETIME CONVERSIONS###########################################################
+
+#input: datetime, not a string!, year_shift (int), month_shift (int)
+#output: datetime, not a string!
+def get_shifted_from_datetime_to_past(present_date, year_shift, month_shift):
+  cur_month = present_date.month
+  cur_year = present_date.year
+  shifted_month = lambda x, y: x if x > y else x - y + 12
+  shifted_year = lambda x, y, z: x if y > z else x - 1
+  output_date = datetime.date(shifted_year(cur_year, cur_month, month_shift), shifted_month(cur_month, month_shift), present_date.day)
+  return output_date
+
+#input: datetime, not a string!
+#output: unix time (int)
+def convert_datetime_to_timestamp(dt):
+  output_utime = int(datetime.datetime.strptime(str(dt), '%Y-%m-%d').timestamp())
+  return output_utime
+
+#input: datetime, not a string!
+#output: pandas date format (string)
+def convert_datetime_to_pandas(dt):
+  date_str = str(dt)
+  date = date_str.split('-')
+  pandas_date = date[1] + '/' + date[2] + '/' + date[0] #'%m/%d/%Y'
+  return pandas_date
+
+######################################################EXTERNAL REQUESTS###########################################
 #Request external sources
 def get_ext_sources_data(api_url, source_name, method=None, opt_params=None, **data_dict):
   req_url = api_url
@@ -43,17 +80,35 @@ def get_ext_sources_data(api_url, source_name, method=None, opt_params=None, **d
     # logging.info('Connect to %s: error %d'%(source_name, response.status_code))
     return response.status_code
 
-#Get historical data from Kraken
-def get_Kraken_OHLC_data(ticker, interval, since=None):
-  add_data = OrderedDict([('pair', ticker),('interval', interval)])
-  kr_req = get_ext_sources_data(KRAKEN_PUBLIC_SERVER, KRAKEN_NAME, method=KRAKEN_METHODS['history'], opt_params=add_data)
-  return kr_req
+########################################################BINANCE#############################################
 
-def get_Kraken_tickers():
-  kr_req = get_ext_sources_data(KRAKEN_PUBLIC_SERVER, KRAKEN_NAME, method=KRAKEN_METHODS['tickers'])
-  res_list = [x for x in kr_req['result'].keys() if x.find('.') == -1]
-  return res_list
+def get_Binance_OHLC_data(ticker, interval, start_time=None, end_time=None, limit=None): #limit (default 500, max 1000)
+  add_data = OrderedDict([('symbol', ticker),('interval', interval),('startTime', start_time),('endTime', end_time),('limit', limit)])
+  bn_req = get_ext_sources_data(BINANCE_PUBLIC_SERVER, BINANCE_NAME, method=BINANCE_METHODS['history'], opt_params=add_data)
+  return bn_req
 
+#Get historical data from Binance
+def get_Binance_historical_klines(dt_end, interval_str, shift_year, shift_month, lim=None):
+  end = convert_datetime_to_timestamp(dt_end)
+  end_msec = end * 1000
+  start_dt = get_shifted_from_datetime_to_past(dt_end, shift_year, shift_month)
+  start = convert_datetime_to_timestamp(start_dt)
+  start_msec = start * 1000
+  output_dict = {}
+  for ticker in range(len(MAIN_TICKERS[BINANCE_NAME])):
+    req = get_Binance_OHLC_data(MAIN_TICKERS[BINANCE_NAME][ticker], BINANCE_INTERVALS[interval_str], start_time=start_msec, end_time=end_msec, limit=lim)
+    output_dict.update({MAIN_TICKERS[BINANCE_NAME][ticker] : req})
+  return output_dict
+
+def get_Binance_main_prices():
+  bn_req = client.get_all_tickers()
+  prices_dict = {}
+  for i in range(len(bn_req)):
+    if bn_req[i]['symbol'] in MAIN_TICKERS[BINANCE_NAME]:
+      price = round(float(bn_req[i]['price']), 8)
+      prices_dict.update({bn_req[i]['symbol'] : price})
+  return prices_dict
+  
 def get_Binance_tickers():
   bn_req = client.get_all_tickers()
   tickers_list = []
@@ -61,12 +116,31 @@ def get_Binance_tickers():
     tickers_list.append(bn_req[i]['symbol'])
   return tickers_list
 
+#######################################################KRAKEN####################################################
+
+#Get historical data from Kraken
+def get_Kraken_OHLC_data(ticker, interval, since=None):
+  add_data = OrderedDict([('pair', ticker),('interval', interval)])
+  kr_req = get_ext_sources_data(KRAKEN_PUBLIC_SERVER, KRAKEN_NAME, method=KRAKEN_METHODS['history'], opt_params=add_data)
+  return kr_req
+
+#tickers - 1 or many as comma-separated string
+def get_Kraken_ticker_stat_24h(tickers):
+  add_data = {'pair' : tickers}
+  kr_req = get_ext_sources_data(KRAKEN_PUBLIC_SERVER, KRAKEN_NAME, method=KRAKEN_METHODS['ticker_stat_24h'], opt_params=add_data)
+  return kr_req
+
+def get_Kraken_tickers():
+  kr_req = get_ext_sources_data(KRAKEN_PUBLIC_SERVER, KRAKEN_NAME, method=KRAKEN_METHODS['tickers'])
+  res_list = [x for x in kr_req['result'].keys() if x.find('.') == -1]
+  return res_list
+
 def make_kraken_binance_intersection_list(kraken_list, binance_list):
   kraken_list.extend(binance_list)
   new_list = set([x for x in kraken_list if kraken_list.count(x) > 1])
   return list(new_list)
 
-#main cycle
+#######################################################MAIN CYCLE########################################################
 def main_cycle():
   binance_status = client.get_system_status()
   # logging.info('Get status from binance server')
