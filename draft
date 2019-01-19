@@ -8,6 +8,7 @@ from collections import OrderedDict
 
 #constants
 PRESENT_DATE = datetime.date.today() #'%Y-%m-%d'
+UTC_INTERVALS = {'minute' : 60, 'hour' : 3600, 'day' : 86400, 'week' : 604800}
 
 KRAKEN_PUBLIC_SERVER = 'https://api.kraken.com/0/public'
 KRAKEN_METHODS = {'tickers' : '/AssetPairs', 'history' : '/OHLC', 'ticker_stat_24h' : '/Ticker'}
@@ -60,9 +61,7 @@ def convert_datetime_to_timestamp(dt):
 #input: datetime, not a string!
 #output: pandas date format (string)
 def convert_datetime_to_pandas(dt):
-  date_str = str(dt)
-  date = date_str.split('-')
-  pandas_date = date[1] + '/' + date[2] + '/' + date[0] #'%m/%d/%Y'
+  pandas_date = dt.strftime('%m/%d/%Y')
   return pandas_date
 
 #input: unix time (int), shift_list = (day, hour, minute)
@@ -71,6 +70,11 @@ def shift_utime_to_past(utime, shift_list):
   total_shift = (shift_list[0] * 86400) + (shift_list[1] * 3600) + (shift_list[2] * 60)
   res_utime = utime - total_shift
   return res_utime
+
+def convert_Binance_timestamp_to_date_string(utime_msec):
+  time = int(utime_msec / 1000)
+  output_utime = datetime.datetime.utcfromtimestamp(time).strftime('%Y-%m-%d %H:%M:%S')
+  return output_utime
 
 ######################################################EXTERNAL REQUESTS###########################################
 #Request external sources
@@ -88,6 +92,49 @@ def get_ext_sources_data(api_url, source_name, method=None, opt_params=None, **d
     # logging.info('Connect to %s: error %d'%(source_name, response.status_code))
     return response.status_code
 
+########################################################INDICATORS#############################################
+
+def smooth_values_Wilder_method(cur_list):
+  first_val = sum(cur_list)
+  new_list = [first_val]
+  for i in range(len(cur_list)):
+    next_val = new_list[i] - (new_list[i] / 14) + cur_list[i]
+    new_list.append(next_val)
+  return new_list
+
+def smooth_ADX14_Wilder_method(cur_list):
+  first_val = sum(cur_list) / len(cur_list)
+  new_list = [first_val]
+  for i in range(len(cur_list)):
+    next_val = ((new_list[i] * 13) + cur_list[i]) / 14
+    new_list.append(next_val)
+  return new_list
+
+#TR = max ((high - low), abs(high - close_prev), abs(low - close_prev))
+#ADX calc
+
+def calculate_ADX14_test():
+  highs_list =[46.68, 46.59, 46.88, 46.81, 46.74, 47.08, 46.84, 45.81, 45.13, 44.96, 45.01, 45.67, 45.71, 45.35]
+  lows_list = [46.10, 46.14, 46.39, 46.41, 45.94, 46.68, 46.17, 45.10, 44.35, 44.61, 44.20, 44.93, 45.01, 44.46]
+  close_list =[46.56, 46.36, 46.83, 46.72, 46.65, 46.97, 46.56, 45.29, 44.94, 44.62, 44.70, 45.27, 45.44, 44.76]
+  cur_high_minus_prior_high = [x - y for x, y in zip(highs_list[1:], highs_list)]
+  prior_low_minus_cur_low = [x - y for x, y in zip(lows_list, lows_list[1:])]
+  dm_plus_list = [max(x, 0) if x > y else 0 for x, y in zip(cur_high_minus_prior_high, prior_low_minus_cur_low)]
+  dm_minus_list = [max(y, 0) if x < y else 0 for x, y in zip(cur_high_minus_prior_high, prior_low_minus_cur_low)]
+  highs_minus_lows_list = [x - y for x, y in zip(highs_list, lows_list)]
+  high_minus_pr_close_list = [abs(x - y) for x, y in zip(highs_list[1:], close_list)]
+  low_minus_pr_close_list = [abs(x - y) for x, y in zip(lows_list[1:], close_list)]
+  tr_list = [max(x, y, z) for x, y, z in zip(highs_minus_lows_list[1:], high_minus_pr_close_list, low_minus_pr_close_list)]
+  #NOT SURE FROM THIS POINT
+  tr14_list = smooth_values_Wilder_method(tr_list)
+  dm14_pl_list = smooth_values_Wilder_method(dm_plus_list)
+  dm14_m_list = smooth_values_Wilder_method(dm_minus_list)
+  di_plus_list = [((x / y) * 100) for x, y in zip(dm14_pl_list, tr14_list)]
+  di_minus_list = [((x / y) * 100) for x, y in zip(dm14_m_list, tr14_list)]
+  dx_i_list = [abs(((x - y) / (x + y)) * 100) for x, y in zip(di_plus_list, di_minus_list)]
+  adx14_list = smooth_ADX14_Wilder_method(dx_i_list[1:])
+  return adx14_list
+
 ########################################################BINANCE#############################################
 
 def get_Binance_OHLC_data(ticker, interval, start_time=None, end_time=None, limit=None): #limit (default 500, max 1000)
@@ -96,11 +143,11 @@ def get_Binance_OHLC_data(ticker, interval, start_time=None, end_time=None, limi
   return bn_req
 
 #Get historical data from Binance
-#shift_time_tuple = (day, hour, minute)
-def get_Binance_historical_klines(dt_end, interval_str, shift_time_tuple, lim=None):
+#utc_shift = shift to past in seconds
+def get_Binance_historical_klines(dt_end, interval_str, utc_shift, lim=None):
   end = convert_datetime_to_timestamp(dt_end)
   end_msec = end * 1000
-  start = shift_utime_to_past(end, shift_time_tuple)
+  start = end - utc_shift
   start_msec = start * 1000
   output_dict = {}
   for ticker in range(len(MAIN_TICKERS[BINANCE_NAME])):
