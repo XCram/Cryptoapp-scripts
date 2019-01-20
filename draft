@@ -5,6 +5,7 @@ import requests
 #import logging
 from binance.client import Client
 from collections import OrderedDict
+# from utils.mysql import MySqlOperation
 
 #constants
 PRESENT_DATE = datetime.date.today() #'%Y-%m-%d'
@@ -30,6 +31,13 @@ CONF_LOG_FILENAME = config.Main.log_filename
 CONF_API_KEY = config.Binance.api_key
 CONF_SECRET_KEY = config.Binance.api_secret
 CONF_TIMEOUT = config.Main.timeout
+# CONF_BINANCE_PAIRS = config.Binance.pairs
+# CONF_MYSQL_HOST = config.MySqlConfig.host
+# CONF_MYSQL_USER = config.MySqlConfig.mysql_user
+# CONF_MYSQL_PASS = config.MySqlConfig.mysql_pass
+# CONF_MYSQL_DB = config.MySqlConfig.db
+# CONF_MYSQL_HISTORY_TRUNCATE = config.MySqlConfig.sql_history_truncate
+# CONF_MYSQL_HISTORY_INSERT = config.MySqlConfig.sql_history_insert
 
 #log settings
 
@@ -95,24 +103,35 @@ def get_ext_sources_data(api_url, source_name, method=None, opt_params=None, **d
 ########################################################INDICATORS#############################################
 
 def smooth_values_Wilder_method(cur_list):
+  cur_list_len = len(cur_list)
   first_val = sum(cur_list)
   new_list = [first_val]
   for i in range(len(cur_list)):
-    next_val = new_list[i] - (new_list[i] / 14) + cur_list[i]
+    next_val = new_list[i] - (new_list[i] / (cur_list_len + 1)) + cur_list[i]
     new_list.append(next_val)
   return new_list
 
 def smooth_ADX14_Wilder_method(cur_list):
-  first_val = sum(cur_list) / len(cur_list)
+  cur_list_len = len(cur_list)
+  first_val = sum(cur_list) / cur_list_len
   new_list = [first_val]
   for i in range(len(cur_list)):
-    next_val = ((new_list[i] * 13) + cur_list[i]) / 14
+    next_val = ((new_list[i] * (cur_list_len - 1)) + cur_list[i]) / cur_list_len
     new_list.append(next_val)
   return new_list
 
-#TR = max ((high - low), abs(high - close_prev), abs(low - close_prev))
-#ADX calc
-
+#ADX meaning
+#1. Trend direction 2. Strength of trend
+#Trend indicator
+#ADX limits: 0 - 100
+# VALUES of ADX
+#  1. 0-10 -- Barely breathing -- NO TRADE
+#  2. 10-20 -- Weak Trend -- Trade (Range / Pre-Breakout)
+#  3.  20-30 -- Potentially Starting To Trend -- Trade (Early Stage Trend)
+#  4.  30-50  -- Heating Up -- Trade (Ride The Wave)
+#  5.  50-75 -- Watch Out  -- NO TRADE
+#  6.  75-100 -- On Fire -- NO TRADE
+# Profitable if 1. High Volume 2. Not too high volatility
 def calculate_ADX14_test():
   highs_list =[46.68, 46.59, 46.88, 46.81, 46.74, 47.08, 46.84, 45.81, 45.13, 44.96, 45.01, 45.67, 45.71, 45.35]
   lows_list = [46.10, 46.14, 46.39, 46.41, 45.94, 46.68, 46.17, 45.10, 44.35, 44.61, 44.20, 44.93, 45.01, 44.46]
@@ -134,6 +153,74 @@ def calculate_ADX14_test():
   dx_i_list = [abs(((x - y) / (x + y)) * 100) for x, y in zip(di_plus_list, di_minus_list)]
   adx14_list = smooth_ADX14_Wilder_method(dx_i_list[1:])
   return adx14_list
+
+#RSI meaning
+#Speed and change of price movements
+#Trend indicator
+#RSI limits: 0 - 100
+#OVERBOUGHT above 70
+#OVERSOLD below 30
+def calculate_RSI14_test():
+  close_list =[45.64, 46.21, 46.25, 45.71, 46.45, 45.78, 45.35, 44.03, 44.18, 44.22, 44.57, 43.42, 42.66, 43.13] #46.22, 
+  cur_close_minus_prior_close = [x - y for x, y in zip(close_list[1:], close_list)]
+  gains_list = [x if x > 0 else 0 for x in cur_close_minus_prior_close]
+  loss_list = [abs(x) if x < 0 else 0 for x in cur_close_minus_prior_close]
+  gains_loss_len = len(cur_close_minus_prior_close)
+  first_avg_gain = sum(gains_list) / len(gains_list)
+  avg_gain_list = [first_avg_gain]
+  for i in range(len(gains_list)):
+    next_val = ((avg_gain_list[i] * gains_loss_len) + gains_list[i]) / (gains_loss_len + 1)
+    avg_gain_list.append(next_val)
+  first_avg_loss = sum(loss_list) / len(loss_list)
+  avg_loss_list = [first_avg_loss]
+  for i in range(len(loss_list)):
+    next_val = ((avg_loss_list[i] * gains_loss_len) + loss_list[i]) / (gains_loss_len + 1)
+    avg_loss_list.append(next_val)
+  rs_list = [x / y for x, y in zip(avg_gain_list, avg_loss_list)]
+  rsi_list = [100 - (100 / (1 + x)) for x in rs_list]
+  return rsi_list
+
+#ATR meaning
+#Volatility
+def calculate_ATR14_test():
+  highs_list =[50.65, 50.43, 49.63, 50.33, 50.29, 50.17, 49.32, 48.50, 48.32, 46.80, 47.80, 48.39, 48.66, 48.79]
+  lows_list = [50.30, 49.21, 48.98, 49.61, 49.20, 49.43, 48.08, 47.64, 41.55, 44.28, 47.31, 47.20, 47.90, 47.73]
+  close_list =[50.41, 49.34, 49.37, 50.23, 49.24, 49.93, 48.43, 48.18, 46.57, 45.41, 47.77, 47.72, 48.62, 47.85]
+  cur_high_minus_prior_high = [x - y for x, y in zip(highs_list[1:], highs_list)]
+  prior_low_minus_cur_low = [x - y for x, y in zip(lows_list, lows_list[1:])]
+  dm_plus_list = [max(x, 0) if x > y else 0 for x, y in zip(cur_high_minus_prior_high, prior_low_minus_cur_low)]
+  dm_minus_list = [max(y, 0) if x < y else 0 for x, y in zip(cur_high_minus_prior_high, prior_low_minus_cur_low)]
+  highs_minus_lows_list = [x - y for x, y in zip(highs_list, lows_list)]
+  high_minus_pr_close_list = [abs(x - y) for x, y in zip(highs_list[1:], close_list)]
+  low_minus_pr_close_list = [abs(x - y) for x, y in zip(lows_list[1:], close_list)]
+  tr_list = [max(x, y, z) for x, y, z in zip(highs_minus_lows_list[1:], high_minus_pr_close_list, low_minus_pr_close_list)]
+  tr_list_len = len(tr_list)
+  first_val = highs_list[0] - lows_list[0]
+  atr_list = [first_val]
+  for i in range(len(tr_list)):
+    next_val = ((atr_list[i] * tr_list_len) + tr_list[i]) / (tr_list_len + 1)
+    atr_list.append(next_val)
+  return atr_list
+  
+def calculate_SMA(num_periods):
+  close_list =[22.27, 22.19, 22.08, 22.17, 22.18, 22.13, 22.23, 22.43, 22.24, 22.29, 22.15, 22.39, 22.38, 22.61, 23.36, 24.05, 23.75, 23.83, 23.95, 23.63, 23.82, 23.87, 23.65, 23.19, 23.10, 23.33, 22.68, 23.10, 22.40, 22.17]
+  sma_list = []
+  end_slice = num_periods - 1
+  for i in range(len(close_list[:-end_slice])):
+    new_val = sum(close_list[i:i+num_periods]) / num_periods
+    sma_list.append(new_val)
+  return sma_list
+
+def calculate_EMA(num_periods):
+  close_list =[22.27, 22.19, 22.08, 22.17, 22.18, 22.13, 22.23, 22.43, 22.24, 22.29, 22.15, 22.39, 22.38, 22.61, 23.36, 24.05, 23.75, 23.83, 23.95, 23.63, 23.82, 23.87, 23.65, 23.19, 23.10, 23.33, 22.68, 23.10, 22.40, 22.17]
+  prev_ema = sum(close_list[:num_periods]) / num_periods
+  end_slice = num_periods + 1
+  multiplier = 2 / end_slice
+  ema_list = [prev_ema]
+  for i in range(len(close_list[:-end_slice])):
+    new_val = ((close_list[i+end_slice] - ema_list[i]) * multiplier) + ema_list[i]
+    ema_list.append(new_val)
+  return ema_list
 
 ########################################################BINANCE#############################################
 
