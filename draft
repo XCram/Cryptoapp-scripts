@@ -154,14 +154,40 @@ def calculate_ADX14_test():
   adx14_list = smooth_ADX14_Wilder_method(dx_i_list[1:])
   return adx14_list
 
+def calculate_DM_PLUS(h_list, l_list):
+  highs_list = h_list[-14:]
+  lows_list = l_list[-14:]
+  cur_high_minus_prior_high = [x - y for x, y in zip(highs_list[1:], highs_list)]
+  prior_low_minus_cur_low = [x - y for x, y in zip(lows_list, lows_list[1:])]
+  dm_plus_list = [max(x, 0) if x > y else 0 for x, y in zip(cur_high_minus_prior_high, prior_low_minus_cur_low)]
+  return dm_plus_list
+
+def calculate_DM_MINUS(h_list, l_list):
+  highs_list = h_list[-14:]
+  lows_list = l_list[-14:]
+  cur_high_minus_prior_high = [x - y for x, y in zip(highs_list[1:], highs_list)]
+  prior_low_minus_cur_low = [x - y for x, y in zip(lows_list, lows_list[1:])]
+  dm_minus_list = [max(y, 0) if x < y else 0 for x, y in zip(cur_high_minus_prior_high, prior_low_minus_cur_low)]
+  return dm_minus_list
+
+def calculate_TR(h_list, l_list, c_list):
+  highs_list = h_list[-14:]
+  lows_list = l_list[-14:]
+  close_list = c_list[-14:]
+  highs_minus_lows_list = [x - y for x, y in zip(highs_list, lows_list)]
+  high_minus_pr_close_list = [abs(x - y) for x, y in zip(highs_list[1:], close_list)]
+  low_minus_pr_close_list = [abs(x - y) for x, y in zip(lows_list[1:], close_list)]
+  tr_list = [max(x, y, z) for x, y, z in zip(highs_minus_lows_list[1:], high_minus_pr_close_list, low_minus_pr_close_list)]
+  return tr_list
+
 #RSI meaning
 #Speed and change of price movements
 #Trend indicator
 #RSI limits: 0 - 100
 #OVERBOUGHT above 70
 #OVERSOLD below 30
-def calculate_RSI14_test():
-  close_list =[45.64, 46.21, 46.25, 45.71, 46.45, 45.78, 45.35, 44.03, 44.18, 44.22, 44.57, 43.42, 42.66, 43.13] #46.22, 
+def calculate_RSI14(c_list):
+  close_list = c_list[-14:]
   cur_close_minus_prior_close = [x - y for x, y in zip(close_list[1:], close_list)]
   gains_list = [x if x > 0 else 0 for x in cur_close_minus_prior_close]
   loss_list = [abs(x) if x < 0 else 0 for x in cur_close_minus_prior_close]
@@ -182,10 +208,10 @@ def calculate_RSI14_test():
 
 #ATR meaning
 #Volatility
-def calculate_ATR14_test():
-  highs_list =[50.65, 50.43, 49.63, 50.33, 50.29, 50.17, 49.32, 48.50, 48.32, 46.80, 47.80, 48.39, 48.66, 48.79]
-  lows_list = [50.30, 49.21, 48.98, 49.61, 49.20, 49.43, 48.08, 47.64, 41.55, 44.28, 47.31, 47.20, 47.90, 47.73]
-  close_list =[50.41, 49.34, 49.37, 50.23, 49.24, 49.93, 48.43, 48.18, 46.57, 45.41, 47.77, 47.72, 48.62, 47.85]
+def calculate_ATR14(h_list, l_list, c_list):
+  highs_list = h_list[-14:]
+  lows_list = l_list[-14:]
+  close_list = c_list[-14:]
   cur_high_minus_prior_high = [x - y for x, y in zip(highs_list[1:], highs_list)]
   prior_low_minus_cur_low = [x - y for x, y in zip(lows_list, lows_list[1:])]
   dm_plus_list = [max(x, 0) if x > y else 0 for x, y in zip(cur_high_minus_prior_high, prior_low_minus_cur_low)]
@@ -202,8 +228,7 @@ def calculate_ATR14_test():
     atr_list.append(next_val)
   return atr_list
   
-def calculate_SMA(num_periods):
-  close_list =[22.27, 22.19, 22.08, 22.17, 22.18, 22.13, 22.23, 22.43, 22.24, 22.29, 22.15, 22.39, 22.38, 22.61, 23.36, 24.05, 23.75, 23.83, 23.95, 23.63, 23.82, 23.87, 23.65, 23.19, 23.10, 23.33, 22.68, 23.10, 22.40, 22.17]
+def calculate_SMA(num_periods, close_list):
   sma_list = []
   end_slice = num_periods - 1
   for i in range(len(close_list[:-end_slice])):
@@ -211,8 +236,7 @@ def calculate_SMA(num_periods):
     sma_list.append(new_val)
   return sma_list
 
-def calculate_EMA(num_periods):
-  close_list =[22.27, 22.19, 22.08, 22.17, 22.18, 22.13, 22.23, 22.43, 22.24, 22.29, 22.15, 22.39, 22.38, 22.61, 23.36, 24.05, 23.75, 23.83, 23.95, 23.63, 23.82, 23.87, 23.65, 23.19, 23.10, 23.33, 22.68, 23.10, 22.40, 22.17]
+def calculate_EMA(num_periods, close_list):
   prev_ema = sum(close_list[:num_periods]) / num_periods
   end_slice = num_periods + 1
   multiplier = 2 / end_slice
