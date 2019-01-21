@@ -246,6 +246,16 @@ def calculate_EMA(num_periods, close_list):
     ema_list.append(new_val)
   return ema_list
 
+#Standard Deviation (SD) meaning
+# 1. Expected risk 2. Determine the significance of certain price movements
+def calculate_SD(num_periods, c_list):
+  close_list = c_list[-num_periods:]
+  mean_price = sum(close_list) / num_periods
+  dev_sq_list = [(x - mean_price)**2 for x in close_list]
+  avg_sq_dev = sum(dev_sq_list) / num_periods
+  sd = avg_sq_dev**(1.0/2)
+  return sd
+
 ########################################################BINANCE#############################################
 
 def get_Binance_OHLC_data(ticker, interval, start_time=None, end_time=None, limit=None): #limit (default 500, max 1000)
