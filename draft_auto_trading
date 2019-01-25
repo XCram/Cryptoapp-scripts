@@ -169,7 +169,7 @@ def process_user_operations(users_list):
         balance = users_list[i][3]
         strategy = users_list[i][4]
         enabled = users_list[i][5]
-        num_active_orders = users_list[i][6] #TOTAL EXECUTED ORDERS OF A SINGLE CYCLE
+        num_active_orders = users_list[i][6] #TOTAL EXECUTED ORDERS OF A SINGLE CYCLE (of a single row from events table)
         initial_sum = users_list[i][7]
         sum_percent_multiplier = users_list[i][8]
         takeprofit = users_list[i][9]
