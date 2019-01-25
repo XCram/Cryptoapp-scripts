@@ -132,6 +132,15 @@ def process_user_orders(orders_list):
               try:
                 cursor.execute(sql, val_tuple)
                 db.commit()
+                sub_sql = 'DELETE FROM events WHERE order_id = %s' #Delete fulfilled event
+                sub_q_tuple = (order_id,)
+                try:
+                  cursor.execute(sub_sql, sub_q_tuple)
+                  db.commit()
+                except:
+                  db.rollback()
+                  print ('Error: unable to delete row in %s table'%table_name)
+                  # logging.info('Error: unable to delete row in %s table'%table_name)
               except:
                 db.rollback()
                 print ('Error: unable to update data in %s table'%main_table_name)
