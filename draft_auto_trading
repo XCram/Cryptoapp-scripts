@@ -74,7 +74,7 @@ def process_user_orders(orders_list):
         sum_percent_multiplier = orders_list[i][8]
         maxbal = orders_list[i][9]
         last_order_sum = orders_list[i][10] #SUM OF THE LAST ORDER
-        first_order_price = orders_list[i][11] #PRICE OF THE LAST ORDER
+        first_order_price = orders_list[i][11] #PRICE OF THE FIRST ORDER
         percent_step_insurance_order = orders_list[i][12] # NEGATIVE PERCENTAGE VALUE (-XX%)
         order_num_limit = orders_list[i][13] #MAX ORDERS TOTAL (int)
         takeprofit = orders_list[i][14] #POSITIVE PERCENTAGE VALUE (XX%)
