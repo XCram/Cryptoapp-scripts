@@ -2,6 +2,7 @@ import datetime
 import time
 import MySQLdb
 import config
+import uuid
 from binance.client import Client
 
 CONF_MYSQL_HOST = config.MySqlConfig.host
@@ -183,7 +184,7 @@ def process_user_operations(users_list):
           cur_date_string = datetime.datetime.utcfromtimestamp(cur_utime).strftime('%Y-%m-%d %H:%M:%S')
           cur_utime_msec = cur_utime * 1000
           #Create order here
-          new_order_id = 'xxxxxxxxxxxxxxx' #new_order['clientOrderId'] ##id, order_id, order_type, comment, last_profit, pair, current_price, balance, sum_percent_multiplier, maxbal, last_order_sum, first_order_price, percent_step_insurance_order, order_num_limit, takeprofit, order_num, user, account, total_sum_of_trades
+          new_order_id = uuid.uuid4().hex.upper()[0:8] #RANDOM ID FOR TESTS #new_order['clientOrderId'] ##id, order_id, order_type, comment, last_profit, pair, current_price, balance, sum_percent_multiplier, maxbal, last_order_sum, first_order_price, percent_step_insurance_order, order_num_limit, takeprofit, order_num, user, account, total_sum_of_trades
           sql = 'INSERT INTO events (date, order_id, order_type, comment, last_profit, pair, current_price, balance, sum_percent_multiplier, maxbal, last_order_sum, first_order_price, percent_step_insurance_order, order_num_limit, takeprofit, order_num, user, account, total_sum_of_trades) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)'
           val_tuple = (cur_date_string, new_order_id, client.ORDER_TYPE_LIMIT, strategy, 0, pair, initial_price, balance, sum_percent_multiplier, maxbal, initial_sum, initial_price, percent_step_insurance_order, order_num_limit, takeprofit, 1, user, account, initial_sum)
           try:
