@@ -2,6 +2,7 @@ import datetime
 import time
 import MySQLdb
 import config
+from binance.client import Client
 
 CONF_MYSQL_HOST = config.MySqlConfig.host
 CONF_MYSQL_USER = config.MySqlConfig.mysql_user
@@ -29,7 +30,7 @@ def get_data_from_mysql_db():
         else:
           results_from_bots_list.append(row)
       for i in range(len(results_from_bots_list)):
-        sub_sql = 'SELECT id, order_id, order_type, comment, last_profit, pair, current_price, balance, sum_percent_multiplier, maxbal, last_order_sum, first_order_price, percent_step_insurance_order, order_num_limit, takeprofit, order_num, user, account FROM events WHERE user = %s AND account = %s ORDER BY id'
+        sub_sql = 'SELECT id, order_id, order_type, comment, last_profit, pair, current_price, balance, sum_percent_multiplier, maxbal, last_order_sum, first_order_price, percent_step_insurance_order, order_num_limit, takeprofit, order_num, user, account, total_sum_of_trades FROM events WHERE user = %s AND account = %s ORDER BY id'
         sub_q_tuple = (results_from_bots_list[i][0], results_from_bots_list[i][1])
         try:
           cursor.execute(sub_sql, sub_q_tuple)
@@ -60,7 +61,7 @@ def process_user_orders(orders_list):
     # values = [x for x in orders_list]
     # placeholders = ['%s' for x in orders_list]
     try:
-      db = MySQLdb.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
+      db = MySQLdb.connect('config_host','config_user','config_pass','config_db')
       cursor = db.cursor()
       for i in range(len(orders_list)):
         # id = orders_list[i][0]
@@ -81,6 +82,7 @@ def process_user_orders(orders_list):
         order_num = orders_list[i][15] #TOTAL ORDERS EXECUTED (int)
         user = orders_list[i][16] #user
         account = orders_list[i][17] #account
+        total_sum_of_trades = orders_list[i][18] #total sum (amount) of trades
         #Calculations from here #id, order_id, order_type, comment, last_profit, pair, current_price, balance, sum_percent_multiplier, maxbal, last_order_sum, first_order_price, percent_step_insurance_order, order_num_limit, takeprofit, order_num
         if balance > maxbal:
           maxbal = balance
@@ -93,10 +95,13 @@ def process_user_orders(orders_list):
             order_sum = (balance / 100) * sum_percent_multiplier
             order_quantity = order_sum / current_price
             order_num += 1
+            new_sum_percent_multiplier = sum_percent_multiplier + (order_num * 2)
+            total_sum_of_trades += new_order_sum
             last_profit += price_deviation_percent #profit/loss percentage
-            new_order_id = 'xxxxxxxxxxxxxxx' #new_order['clientOrderId'] ##id, order_id, order_type, comment, last_profit, pair, current_price, balance, sum_percent_multiplier, maxbal, last_order_sum, first_order_price, percent_step_insurance_order, order_num_limit, takeprofit, order_num
+            new_percent_insurance_order = percent_step_insurance_order * 2
+            new_order_id = 'xxxxxxxxxxxxxxx' #new_order['clientOrderId'] ##id, order_id, order_type, comment, last_profit, pair, current_price, balance, sum_percent_multiplier, maxbal, last_order_sum, first_order_price, percent_step_insurance_order, order_num_limit, takeprofit, order_num, total_sum_of_trades
             sql = 'UPDATE events SET date = %s, order_id = %s, order_type = %s, comment = %s, last_profit = %s, pair = %s, current_price = %s, balance = %s, sum_percent_multiplier = %s, maxbal = %s, last_order_sum = %s, first_order_price = %s, percent_step_insurance_order = %s, order_num_limit = %s, takeprofit = %s, order_num = %s WHERE order_id = %s'
-            val_tuple = (cur_date_string, new_order_id, client.ORDER_TYPE_LIMIT, comment, last_profit, pair, current_price, balance, sum_percent_multiplier, maxbal, order_sum, first_order_price, percent_step_insurance_order, order_num_limit, takeprofit, order_num, order_id)
+            val_tuple = (cur_date_string, new_order_id, client.ORDER_TYPE_LIMIT, comment, last_profit, pair, current_price, balance, new_sum_percent_multiplier, maxbal, order_sum, first_order_price, new_percent_insurance_order, order_num_limit, takeprofit, order_num, order_id, total_sum_of_trades)
             try:
               cursor.execute(sql, val_tuple)
               db.commit()
@@ -119,7 +124,7 @@ def process_user_orders(orders_list):
             if sub_results:
               sell_amount = 100 #calculate sell amount (quantity * sell_price)
               new_balance = sub_results[0] + sell_amount
-              new_profit = sub_results[1] + sell_amount
+              new_profit = sub_results[1] + (sell_amount - total_sum_of_trades)
               cur_utime = int(time.time())
               cur_date_string = datetime.datetime.utcfromtimestamp(cur_utime).strftime('%Y-%m-%d %H:%M:%S')
               sql = 'UPDATE bots SET date = %s, balance = %s, profit = %s WHERE user = %s AND account = %s AND strategy = %s'
@@ -169,9 +174,9 @@ def process_user_operations(users_list):
           cur_date_string = datetime.datetime.utcfromtimestamp(cur_utime).strftime('%Y-%m-%d %H:%M:%S')
           cur_utime_msec = cur_utime * 1000
           #Create order here
-          new_order_id = 'xxxxxxxxxxxxxxx' #new_order['clientOrderId'] ##id, order_id, order_type, comment, last_profit, pair, current_price, balance, sum_percent_multiplier, maxbal, last_order_sum, first_order_price, percent_step_insurance_order, order_num_limit, takeprofit, order_num
-          sql = 'INSERT INTO events (date, order_id, order_type, comment, last_profit, pair, current_price, balance, sum_percent_multiplier, maxbal, last_order_sum, first_order_price, percent_step_insurance_order, order_num_limit, takeprofit, order_num, user, account) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)'
-          val_tuple = (cur_date_string, new_order_id, client.ORDER_TYPE_LIMIT, strategy, 0, pair, initial_price, balance, sum_percent_multiplier, maxbal, initial_sum, initial_price, percent_step_insurance_order, order_num_limit, takeprofit, 1, user, account)
+          new_order_id = 'xxxxxxxxxxxxxxx' #new_order['clientOrderId'] ##id, order_id, order_type, comment, last_profit, pair, current_price, balance, sum_percent_multiplier, maxbal, last_order_sum, first_order_price, percent_step_insurance_order, order_num_limit, takeprofit, order_num, user, account, total_sum_of_trades
+          sql = 'INSERT INTO events (date, order_id, order_type, comment, last_profit, pair, current_price, balance, sum_percent_multiplier, maxbal, last_order_sum, first_order_price, percent_step_insurance_order, order_num_limit, takeprofit, order_num, user, account, total_sum_of_trades) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)'
+          val_tuple = (cur_date_string, new_order_id, client.ORDER_TYPE_LIMIT, strategy, 0, pair, initial_price, balance, sum_percent_multiplier, maxbal, initial_sum, initial_price, percent_step_insurance_order, order_num_limit, takeprofit, 1, user, account, initial_sum)
           try:
             cursor.execute(sql, val_tuple)
             db.commit()
@@ -190,4 +195,4 @@ if __name__ == '__main__':
   data_from_db = get_data_from_mysql_db()
   process_user_orders(data_from_db[1])
   process_user_operations(data_from_db[0])
-  time.sleep(3600) #delay 1 minute
+  time.sleep(60) #delay 1 minute
