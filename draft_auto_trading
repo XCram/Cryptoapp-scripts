@@ -98,7 +98,7 @@ def process_user_orders(orders_list):
             order_quantity = order_sum / current_price
             order_num += 1
             new_sum_percent_multiplier = sum_percent_multiplier + (order_num * 2)
-            total_sum_of_trades += new_order_sum
+            total_sum_of_trades += order_sum
             last_profit += price_deviation_percent #profit/loss percentage
             new_percent_insurance_order = percent_step_insurance_order * 2
             new_order_id = uuid.uuid4().hex.upper()[0:8] #RANDOM ID FOR TESTS #new_order['clientOrderId'] ##id, order_id, order_type, comment, last_profit, pair, current_price, balance, sum_percent_multiplier, maxbal, last_order_sum, first_order_price, percent_step_insurance_order, order_num_limit, takeprofit, order_num, total_sum_of_trades
