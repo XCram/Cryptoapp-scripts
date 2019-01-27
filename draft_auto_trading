@@ -163,6 +163,7 @@ def process_user_orders(orders_list):
 def process_user_operations(users_list):
   if users_list:
     table_name = 'events'
+    sub_table_name = 'bots'
     try:
       db = MySQLdb.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
       cursor = db.cursor()
@@ -185,7 +186,7 @@ def process_user_operations(users_list):
         #Calculations from here
         if balance > maxbal:
           maxbal = balance
-          initial_quantity = initial_sum / initial_price
+          initial_quantity = round(initial_sum / initial_price, 8)
           cur_utime = int(time.time())
           cur_date_string = datetime.datetime.utcfromtimestamp(cur_utime).strftime('%Y-%m-%d %H:%M:%S')
           cur_utime_msec = cur_utime * 1000
@@ -196,6 +197,16 @@ def process_user_operations(users_list):
           try:
             cursor.execute(sql, val_tuple)
             db.commit()
+            sub_sql = 'UPDATE bots SET num_active_orders = %s WHERE user = %s AND account = %s AND strategy = %s'
+            sub_val_tuple = (1, user, account, strategy)
+            try:
+              cursor.execute(sub_sql, sub_val_tuple)
+              db.commit()
+            except (MySQLdb.Error, MySQLdb.Warning) as e:
+              db.rollback()
+              print ('Error: unable to update data in %s table'%sub_table_name)
+              print(e.args[0],e.args[1])
+              # logging.info('Error: unable to update data in %s table'%sub_table_name)
           except:
             db.rollback()
             print ('Error: unable to insert data into %s table'%table_name)
