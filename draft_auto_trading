@@ -430,10 +430,10 @@ def update_num_active_orders_bots(value):
 if __name__ == '__main__':
   pl = get_Binance_prices_list('BTCUSDT', 'day', 14) #Create a list of average historical prices of a period
   # update_first_order_price(pl[0], 'X/Y') #Update first_order_price column of events table where pair is 'X/Y'
-  update_price_bots(pl[0], 'X/Y') #Update price column of bots table where pair is 'X/Y'
-  update_num_active_orders_bots(0) #Update num_active_orders column of a bots table
+  update_price_bots(pl[0], 'X/Y') #Update price column of the bots table where pair is 'X/Y'
+  update_num_active_orders_bots(0) #Update num_active_orders column of the bots table
   data = get_data_from_mysql_db('long') # Get data from events and bots tables where strategy/comment is 'long'
-  process_user_operations(data[0]) #Create rows of the events table (initial orders)
+  process_user_operations(data[0]) #Insert rows into events table (initial orders)
   # update_percent_step_insurance_order(-1.0) #Update percent_step_insurance_order column in bots and events
   # update_takeprofit(1.0) #Update takeprofit column in bots and events
   pg = get_prices_generator(pl[1:]) #Create generator from a prices list
