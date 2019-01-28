@@ -3,7 +3,9 @@ import time
 import MySQLdb
 import config
 import uuid
+import requests
 from binance.client import Client
+from collections import OrderedDict
 
 CONF_MYSQL_HOST = config.MySqlConfig.host
 CONF_MYSQL_USER = config.MySqlConfig.mysql_user
