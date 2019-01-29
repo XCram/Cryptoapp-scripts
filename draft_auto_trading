@@ -475,7 +475,7 @@ def update_num_active_orders_bots(value):
 def clear_mysql_bots():
   table_name = 'bots'
   try:
-    db = MySQLdb.connect('localhost','root','','cryptoapp_db')
+    db = MySQLdb.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
     cursor = db.cursor()
     sub_sql = 'DELETE FROM bots WHERE access = %s'
     sub_q_tuple = (1,)
@@ -494,7 +494,7 @@ def clear_mysql_bots():
 def clear_mysql_events():
   table_name = 'events'
   try:
-    db = MySQLdb.connect('localhost','root','','cryptoapp_db')
+    db = MySQLdb.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
     cursor = db.cursor()
     sub_sql = 'DELETE FROM events WHERE id = %s'
     sub_q_tuple = (55,)
@@ -518,7 +518,7 @@ def create_test_mysql_bots(num_rows, new_balance, sum_percent_multiplier, initia
   price = 100.7777
   profit = 0.0
   try:
-    db = MySQLdb.connect('localhost','root','','cryptoapp_db')
+    db = MySQLdb.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
     cursor = db.cursor()
     sql = 'INSERT INTO bots (id, user, account, access, balance, strategy, enabled, num_active_orders, initial_sum, sum_percent_multiplier, takeprofit, percent_step_insurance_order, order_num_limit, maxbal, pair, price, profit, date) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)'
     for i in range(num_rows):
