@@ -497,7 +497,7 @@ def clear_mysql_events():
     db = MySQLdb.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
     cursor = db.cursor()
     sub_sql = 'DELETE FROM events WHERE id = %s'
-    sub_q_tuple = (55,)
+    sub_q_tuple = (55,) #DEFAULT id value for tests
     try:
       cursor.execute(sub_sql, sub_q_tuple)
       db.commit()
