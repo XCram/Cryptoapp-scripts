@@ -122,7 +122,7 @@ def process_user_orders(orders_list):
           cur_utime = int(time.time())
           cur_date_string = datetime.datetime.utcfromtimestamp(cur_utime).strftime('%Y-%m-%d %H:%M:%S')
           print ('Price is below percent_step_insurance_order. Time: %s'%cur_date_string) #test
-          cur_utime_msec = cur_utime * 1000
+          cur_utime_msec = int(time.time() * 1000)
           order_sum = round((balance / 100) * sum_percent_multiplier, 8)
           total_sum_of_buys = round(total_sum_of_buys + order_sum, 8)
           if maxbal >= total_sum_of_buys:
