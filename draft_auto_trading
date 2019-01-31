@@ -245,7 +245,7 @@ def process_user_operations(users_list):
           initial_quantity = round(initial_sum / initial_price, 8)
           cur_utime = int(time.time())
           cur_date_string = datetime.datetime.utcfromtimestamp(cur_utime).strftime('%Y-%m-%d %H:%M:%S')
-          cur_utime_msec = cur_utime * 1000
+          cur_utime_msec = int(time.time() * 1000)
           new_balance = round(balance - initial_sum, 8)
           #Create order here
           new_order_id = uuid.uuid4().hex.upper()[0:8] #RANDOM ID FOR TESTS ##new_order['clientOrderId'] ##id, order_id, order_type, comment, last_profit, pair, current_price, balance, sum_percent_multiplier, maxbal, last_order_sum, first_order_price, percent_step_insurance_order, order_num_limit, takeprofit, order_num, user, account, total_sum_of_buys, total_quantity_of_buys
