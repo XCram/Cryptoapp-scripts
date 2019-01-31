@@ -90,15 +90,18 @@ def get_ext_sources_data(api_url, source_name, method=None, opt_params=None, **d
   req_url = api_url
   if method:
     req_url += method
-  response = requests.get(req_url, opt_params, **data_dict)
-  if response.status_code == requests.codes.ok:
-    resp_result = response.json()
-    # logging.info('Connect to %s: success'%source_name)
-    return resp_result
-  else:
-    # logging.info('Connect to %s: failure'%source_name)
-    # logging.info('Connect to %s: error %d'%(source_name, response.status_code))
-    return response.status_code
+  try:
+    response = requests.get(req_url, opt_params, **data_dict)
+    # print(response.url) #test
+    if response.status_code == requests.codes.ok:
+      resp_result = response.json()
+      # logging.info('Connect to %s: success'%source_name)
+      return resp_result
+    else:
+      # logging.info('Connect to %s: error %d'%(source_name, response.status_code))
+      return response.status_code
+  except requests.exceptions.RequestException as e:
+    print (e)
 
 ########################################################INDICATORS#############################################
 
