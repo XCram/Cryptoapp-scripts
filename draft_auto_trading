@@ -12,6 +12,9 @@ CONF_MYSQL_USER = config.MySqlConfig.mysql_user
 CONF_MYSQL_PASS = config.MySqlConfig.mysql_pass
 CONF_MYSQL_DB = config.MySqlConfig.db
 
+BOTS_COLUMNS = ('user', 'account', 'access', 'balance', 'strategy', 'enabled', 'num_active_orders', 'initial_sum', 'sum_percent_multiplier', 'takeprofit', 'percent_step_insurance_order', 'order_num_limit', 'maxbal', 'pair', 'price', 'profit')
+EVENTS_COLUMNS = ('id', 'order_id', 'order_type', 'comment', 'last_profit', 'pair', 'current_price', 'balance', 'sum_percent_multiplier', 'maxbal', 'last_order_sum', 'first_order_price', 'percent_step_insurance_order', 'order_num_limit', 'takeprofit', 'order_num', 'user', 'account', 'total_sum_of_buys', 'total_quantity_of_buys')
+
 #input: strategy (string)
 #output: 2 lists of tuples
 def get_data_from_mysql_db(strategy):
@@ -23,7 +26,7 @@ def get_data_from_mysql_db(strategy):
   try:
     db = MySQLdb.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
     cursor = db.cursor()
-    sql = 'SELECT user, account, access, balance, strategy, enabled, num_active_orders, initial_sum, sum_percent_multiplier, takeprofit, percent_step_insurance_order, order_num_limit, maxbal, pair, price, profit FROM bots WHERE enabled = %s AND strategy = %s'
+    sql = 'SELECT {} FROM bots WHERE enabled = %s AND strategy = %s'.format(', '.join('{}'.format(BOTS_COLUMNS[i]) for i in range(len(BOTS_COLUMNS))))
     q_tuple = ('on', strategy)
     try:
       cursor.execute(sql, q_tuple)
@@ -35,7 +38,7 @@ def get_data_from_mysql_db(strategy):
         else:
           results_from_bots_list.append(row)
       for i in range(len(results_from_bots_list)):
-        sub_sql = 'SELECT id, order_id, order_type, comment, last_profit, pair, current_price, balance, sum_percent_multiplier, maxbal, last_order_sum, first_order_price, percent_step_insurance_order, order_num_limit, takeprofit, order_num, user, account, total_sum_of_buys, total_quantity_of_buys FROM events WHERE user = %s AND account = %s AND comment = %s ORDER BY id'
+        sub_sql = 'SELECT {} FROM events WHERE user = %s AND account = %s AND comment = %s ORDER BY id'.format(', '.join('{}'.format(EVENTS_COLUMNS[i]) for i in range(len(EVENTS_COLUMNS))))
         sub_q_tuple = (results_from_bots_list[i][0], results_from_bots_list[i][1], results_from_bots_list[i][4])
         try:
           cursor.execute(sub_sql, sub_q_tuple)
