@@ -135,10 +135,10 @@ def process_auto_trade(bots_list):
                 print(e.args[0],e.args[1])
                 # logging.info('Error: unable to insert data into %s table'%table_name
               #TRANSACTIONS HISTORY END
-            except:
+            except (MySQLdb.Error, MySQLdb.Warning) as e:
               db.rollback()
               print ('Error: unable to update data in %s table'%main_table_name)
-              # logging.info('Error: unable to update data in %s table'%main_table_name)
+              print(e.args[0],e.args[1])
         elif price_deviation_percent > percent_sell_if_above:
           #Create new order here (SELL, MARKET, sell_quantity)
           cur_utime = int(time.time())
