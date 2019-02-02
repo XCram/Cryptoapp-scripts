@@ -33,12 +33,12 @@ def mysql_db_get_data_from_bots(strategy):
           first_trade_list.append(row)
         else:
           results_from_bots_list.append(row)
-      return first_trade_list, results_from_bots_list
     except:
       print ('Error: unable to fetch data from %s table'%table_name)
       # logging.info('Error: unable to fetch data from %s table'%table_name)
     cursor.close()
     db.close()
+    return first_trade_list, results_from_bots_list
   except (MySQLdb.Error, MySQLdb.Warning) as e:
     print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
     # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
