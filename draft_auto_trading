@@ -3,59 +3,42 @@ import time
 import MySQLdb
 import config
 import uuid
-import requests
-from binance.client import Client
-from collections import OrderedDict
 
 CONF_MYSQL_HOST = config.MySqlConfig.host
 CONF_MYSQL_USER = config.MySqlConfig.mysql_user
 CONF_MYSQL_PASS = config.MySqlConfig.mysql_pass
 CONF_MYSQL_DB = config.MySqlConfig.db
 
-BOTS_COLUMNS = ('user', 'account', 'access', 'balance', 'strategy', 'enabled', 'num_active_orders', 'initial_sum', 'sum_percent_multiplier', 'takeprofit', 'percent_step_insurance_order', 'order_num_limit', 'maxbal', 'pair', 'price', 'profit')
-EVENTS_COLUMNS = ('id', 'order_id', 'order_type', 'comment', 'last_profit', 'pair', 'current_price', 'balance', 'sum_percent_multiplier', 'maxbal', 'last_order_sum', 'first_order_price', 'percent_step_insurance_order', 'order_num_limit', 'takeprofit', 'order_num', 'user', 'account', 'total_sum_of_buys', 'total_quantity_of_buys')
+BOTS_COLUMNS = ('user', 'account', 'access', 'strategy', 'enabled', 'balance_total', 'balance_allowed', 'amount_first_order', 'amount_percent_multiplier', 'order_num_current', 'order_num_current_limit', 'percent_sell_if_above', 'percent_buy_if_below', 'pair', 'pair_x_symbol', 'pair_y_symbol', 'x_symbol_balance_total', 'price_current', 'price_first_order', 'buys_amount_total', 'buys_quantity_total', 'last_order_amount', 'last_step_percent', 'profit')
+TRANSACTIONS_COLUMNS = ('date', 'user', 'account', 'type', 'symbol', 'amount', 'balance', 'comment') #comment -- order id or txID
 
 #input: strategy (string)
 #output: 2 lists of tuples
-def get_data_from_mysql_db(strategy):
+def mysql_db_get_data_from_bots(strategy):
   table_name = 'bots'
-  sub_table_name = 'events'
+  # sub_table_name = 'transactions'
   results_from_bots_list = []
-  results_from_events_list = []
+  # results_from_events_list = []
   first_trade_list = []
   try:
     db = MySQLdb.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
     cursor = db.cursor()
     sql = 'SELECT {} FROM bots WHERE enabled = %s AND strategy = %s'.format(', '.join('{}'.format(BOTS_COLUMNS[i]) for i in range(len(BOTS_COLUMNS))))
-    q_tuple = ('on', strategy)
+    q_tuple = (1, strategy)
     try:
       cursor.execute(sql, q_tuple)
       results = cursor.fetchall()
       for row in results:
-        # row_tuple_to_list = list(row)
-        if row[6] == 0:#num_active_orders = 0
-          first_trade_list.append(row) #For the first trade
+        if row[9] == 0: #order_num_current
+          first_trade_list.append(row)
         else:
           results_from_bots_list.append(row)
-      for i in range(len(results_from_bots_list)):
-        sub_sql = 'SELECT {} FROM events WHERE user = %s AND account = %s AND comment = %s ORDER BY id'.format(', '.join('{}'.format(EVENTS_COLUMNS[i]) for i in range(len(EVENTS_COLUMNS))))
-        sub_q_tuple = (results_from_bots_list[i][0], results_from_bots_list[i][1], results_from_bots_list[i][4])
-        try:
-          cursor.execute(sub_sql, sub_q_tuple)
-          sub_results = cursor.fetchall()
-          for sub_row in sub_results:
-            # sub_row_tuple_to_list = list(sub_row)
-            results_from_events_list.append(sub_row)
-        except:
-          print ('Error: unable to fetch data from %s table'%sub_table_name)
-          # logging.info('Error: unable to fetch data from %s table'%sub_table_name)
+      return first_trade_list, results_from_bots_list
     except:
       print ('Error: unable to fetch data from %s table'%table_name)
       # logging.info('Error: unable to fetch data from %s table'%table_name)
-    finally:
-      cursor.close()
-      db.close()
-      return first_trade_list, results_from_events_list
+    cursor.close()
+    db.close()
   except (MySQLdb.Error, MySQLdb.Warning) as e:
     print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
     # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
@@ -63,152 +46,155 @@ def get_data_from_mysql_db(strategy):
 
 #if active orders > 0 -- process them here
 #input: orders_list (list of rows (tuples) from events table)
-def process_user_orders(orders_list):
-  if orders_list:
-    table_name = 'events'
+def process_auto_trade(bots_list):
+  if bots_list:
+    table_name = 'transactions'
     main_table_name = 'bots'
-    # values = [x for x in orders_list]
-    # placeholders = ['%s' for x in orders_list]
     try:
       db = MySQLdb.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
       cursor = db.cursor()
-      for i in range(len(orders_list)):
-        # id = orders_list[i][0]
-        order_id = orders_list[i][1]
-        order_type = orders_list[i][2] #MARKET OR LIMIT
-        comment = orders_list[i][3]
-        last_profit = orders_list[i][4] #PERCENTAGE VALUE (POSITIVE OR NEGATIVE)
-        pair = orders_list[i][5]
-        current_price = orders_list[i][6]
-        balance = orders_list[i][7]
-        sum_percent_multiplier = orders_list[i][8]
-        maxbal = orders_list[i][9]
-        last_order_sum = orders_list[i][10] #SUM OF THE LAST ORDER
-        first_order_price = orders_list[i][11] #PRICE OF THE FIRST ORDER
-        percent_step_insurance_order = orders_list[i][12] # NEGATIVE PERCENTAGE VALUE (-XX%)
-        order_num_limit = orders_list[i][13] #MAX ORDERS TOTAL (int)
-        takeprofit = orders_list[i][14] #POSITIVE PERCENTAGE VALUE (XX%)
-        order_num = orders_list[i][15] #TOTAL ORDERS EXECUTED (int)
-        user = orders_list[i][16] #user
-        account = orders_list[i][17] #account
-        total_sum_of_buys = orders_list[i][18] #total sum (amount) of buys
-        total_quantity_of_buys = orders_list[i][19] #total quantity of buys
-        #Get balance from bots and update balance in events table
-        sub_sql = 'SELECT balance FROM bots WHERE user = %s AND account = %s AND strategy = %s'
-        sub_q_tuple = (user, account, comment)
-        try:
-          cursor.execute(sub_sql, sub_q_tuple)
-          sub_results = cursor.fetchone()
-          if sub_results:
-            sql = 'UPDATE events SET balance = %s WHERE user = %s AND account = %s AND comment = %s'
-            val_tuple = (sub_results[0], user, account, comment)
-            try:
-              cursor.execute(sql, val_tuple)
-              db.commit()
-              balance = sub_results[0]
-            except:
-              db.rollback()
-              print ('Error: unable to update data in %s table'%table_name)
-              # logging.info('Error: unable to update data in %s table'%table_name)
-        except:
-          print ('Error: unable to fetch data from %s table'%main_table_name)
-          # logging.info('Error: unable to fetch data from %s table'%main_table_name)
-        if balance < maxbal:
-          maxbal = balance
-        #Calculations from here #id, order_id, order_type, comment, last_profit, pair, current_price, balance, sum_percent_multiplier, maxbal, last_order_sum, first_order_price, percent_step_insurance_order, order_num_limit, takeprofit, order_num
-        price_deviation_percent = ((current_price - first_order_price) * 100) / first_order_price
+      for i in range(len(bots_list)):
+        user = bots_list[i][0]
+        account = bots_list[i][1]
+        access = bots_list[i][2]
+        strategy = bots_list[i][3]
+        enabled = bots_list[i][4]
+        balance_total = bots_list[i][5]
+        balance_allowed = bots_list[i][6]
+        amount_first_order = bots_list[i][7]
+        amount_percent_multiplier = bots_list[i][8]
+        order_num_current = bots_list[i][9] #ORDERS EXECUTED IN SINGLE CYCLE (int)
+        order_num_current_limit = bots_list[i][10] #MAX ORDERS TOTAL (int)
+        percent_sell_if_above = bots_list[i][11] #POSITIVE PERCENTAGE VALUE (XX.YY%)
+        percent_buy_if_below = bots_list[i][12] # NEGATIVE PERCENTAGE VALUE (-XX.YY%)
+        pair = bots_list[i][13]
+        pair_x_symbol = bots_list[i][14]
+        pair_y_symbol = bots_list[i][15]
+        x_symbol_balance_total = bots_list[i][16] 
+        price_current = bots_list[i][17] 
+        price_first_order = bots_list[i][18]
+        buys_amount_total = bots_list[i][19]
+        buys_quantity_total = bots_list[i][20]
+        last_order_amount = bots_list[i][21]
+        last_step_percent = bots_list[i][22]
+        profit = bots_list[i][23] # Amount of Y symbol (decimal(20,8))
+        if balance_total < balance_allowed:
+          balance_allowed = balance_total
+        #Calculations from here
+        price_deviation_percent = ((price_current - price_first_order) * 100) / price_first_order
         print ('Current price deviation: %f'%price_deviation_percent)
-        print ('BUY if below: %f'%percent_step_insurance_order)
-        print ('SELL if above: %f'%takeprofit)
-        if price_deviation_percent < percent_step_insurance_order and order_num < order_num_limit: #price too low and num executed orders below limit
+        print ('BUY if below: %f'%last_step_percent)
+        print ('SELL if above: %f'%percent_sell_if_above)
+        if price_deviation_percent < last_step_percent and order_num_current < order_num_current_limit: #price too low and num executed orders below limit
           #Create new order here (BUY, order_quantity)
           cur_utime = int(time.time())
           cur_date_string = datetime.datetime.utcfromtimestamp(cur_utime).strftime('%Y-%m-%d %H:%M:%S')
-          print ('Price is below percent_step_insurance_order. Time: %s'%cur_date_string) #test
+          print ('Price is below last_step_percent. Time: %s'%cur_date_string) #test
           cur_utime_msec = int(time.time() * 1000)
-          order_sum = round((balance / 100) * sum_percent_multiplier, 8)
-          total_sum_of_buys = round(total_sum_of_buys + order_sum, 8)
-          if maxbal >= total_sum_of_buys:
+          order_amount = round(last_order_amount + ((last_order_amount / 100) * amount_percent_multiplier), 8)
+          buys_amount_total = round(buys_amount_total + order_amount, 8)
+          if balance_allowed >= buys_amount_total:
             print ('We have enough balance. BUY. Time: %s'%cur_date_string) #test
-            order_quantity = round(order_sum / current_price, 8)
-            order_num += 1
-            new_balance = round(balance - order_sum, 8)
-            total_quantity_of_buys = round(total_quantity_of_buys + order_quantity, 8)
-            new_sum_percent_multiplier = round(sum_percent_multiplier + order_num, 2)
-            last_profit = round(last_profit + price_deviation_percent, 2) #profit/loss percentage
-            new_percent_insurance_order = percent_step_insurance_order * 2
-            print ('BUY PRICE: %f'%current_price) #test
+            order_quantity = round(order_amount / price_current, 8)
+            x_symbol_balance_total += order_quantity
+            order_num_current += 1
+            new_balance = round(balance_total - order_amount, 8)
+            # new_balance_allowed = round(balance_allowed - order_amount, 8)
+            buys_quantity_total = round(buys_quantity_total + order_quantity, 8)
+            # new_amount_percent_multiplier = round(amount_percent_multiplier + order_num_current, 2)
+            last_step_percent += percent_buy_if_below
+            print ('BUY PRICE: %f'%price_current) #test
             print ('BUY QUANTITY (X): %f'%order_quantity) #test
-            print ('BUY AMOUNT (Y): %f'%order_sum) #test
-            print ('NEW sum_percent_multiplier: %f'%new_sum_percent_multiplier) #test
-            print ('NEW percent_step_insurance_order: %f'%new_percent_insurance_order) #test
+            print ('BUY AMOUNT (Y): %f'%order_amount) #test
+            # print ('NEW amount_percent_multiplier: %f'%new_amount_percent_multiplier) #test
+            print ('NEW last_step_percent: %f'%last_step_percent) #test
             print ('NEW BALANCE: %f'%new_balance) #test
-            if maxbal > new_balance:
-              maxbal = new_balance
-            new_order_id = uuid.uuid4().hex.upper()[0:8] #RANDOM ID FOR TESTS #new_order['clientOrderId'] ##id, order_id, order_type, comment, last_profit, pair, current_price, balance, sum_percent_multiplier, maxbal, last_order_sum, first_order_price, percent_step_insurance_order, order_num_limit, takeprofit, order_num, total_sum_of_trades, total_quantity_of_buys
-            sql = 'UPDATE events SET date = %s, order_id = %s, order_type = %s, comment = %s, last_profit = %s, pair = %s, current_price = %s, balance = %s, sum_percent_multiplier = %s, maxbal = %s, last_order_sum = %s, first_order_price = %s, percent_step_insurance_order = %s, order_num_limit = %s, takeprofit = %s, order_num = %s, total_sum_of_buys = %s, total_quantity_of_buys = %s WHERE order_id = %s'
-            val_tuple = (cur_date_string, new_order_id, client.ORDER_TYPE_LIMIT, comment, last_profit, pair, current_price, new_balance, new_sum_percent_multiplier, maxbal, order_sum, first_order_price, new_percent_insurance_order, order_num_limit, takeprofit, order_num, total_sum_of_buys, total_quantity_of_buys, order_id)
+            sql = 'UPDATE bots SET balance_total = %s, x_symbol_balance_total = %s, order_num_current = %s, last_order_amount = %s, last_step_percent = %s, buys_quantity_total = %s, buys_amount_total = %s WHERE user = %s AND account = %s AND strategy = %s AND enabled = %s'
+            val_tuple = (new_balance, x_symbol_balance_total, order_num_current, order_amount, last_step_percent, buys_quantity_total, buys_amount_total, user, account, strategy, enabled)
             try:
               cursor.execute(sql, val_tuple)
               db.commit()
-            except:
-              db.rollback()
-              print ('Error: unable to update data in %s table'%table_name)
-              # logging.info('Error: unable to update data in %s table'%table_name)
-            sub_sql = 'UPDATE bots SET balance = %s WHERE user = %s AND account = %s AND strategy = %s'
-            sub_val_tuple = (new_balance, user, account, comment)
-            try:
-              cursor.execute(sub_sql, sub_val_tuple)
-              db.commit()
+              #TRANSACTIONS HISTORY BEGIN
+              new_order_id = 'Order ID: %s'%uuid.uuid4().hex.upper()[0:8] #RANDOM ID FOR TESTS #new_order['clientOrderId'] ##id, order_id, order_type, comment, last_profit, pair, price_current, balance, amount_percent_multiplier, balance_allowed, last_order_amount, price_first_order, percent_buy_if_below, order_num_current_limit, percent_sell_if_above, order_num_current, total_sum_of_trades, buys_quantity_total
+              sql = 'INSERT INTO transactions ({0}) VALUES ({1})'.format(', '.join('{}'.format(TRANSACTIONS_COLUMNS[i]) for i in range(len(TRANSACTIONS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(TRANSACTIONS_COLUMNS))))
+              val_tuple = (cur_date_string, user, account, 'SELL', pair_y_symbol, order_amount, new_balance, new_order_id)
+              try:
+                cursor.execute(sql, val_tuple)
+                db.commit()
+              except (MySQLdb.Error, MySQLdb.Warning) as e:
+                db.rollback()
+                print ('Error: unable to insert data into %s table'%table_name)
+                print(e.args[0],e.args[1])
+                # logging.info('Error: unable to insert data into %s table'%table_name)
+              sql = 'INSERT INTO transactions ({0}) VALUES ({1})'.format(', '.join('{}'.format(TRANSACTIONS_COLUMNS[i]) for i in range(len(TRANSACTIONS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(TRANSACTIONS_COLUMNS))))
+              val_tuple = (cur_date_string, user, account, 'BUY', pair_x_symbol, order_quantity, x_symbol_balance_total, new_order_id)
+              try:
+                cursor.execute(sql, val_tuple)
+                db.commit()
+              except (MySQLdb.Error, MySQLdb.Warning) as e:
+                db.rollback()
+                print ('Error: unable to insert data into %s table'%table_name)
+                print(e.args[0],e.args[1])
+                # logging.info('Error: unable to insert data into %s table'%table_name
+              #TRANSACTIONS HISTORY END
             except:
               db.rollback()
               print ('Error: unable to update data in %s table'%main_table_name)
               # logging.info('Error: unable to update data in %s table'%main_table_name)
-        elif price_deviation_percent > takeprofit:
+        elif price_deviation_percent > percent_sell_if_above:
           #Create new order here (SELL, MARKET, sell_quantity)
           cur_utime = int(time.time())
           cur_date_string = datetime.datetime.utcfromtimestamp(cur_utime).strftime('%Y-%m-%d %H:%M:%S')
-          sell_price = current_price # for tests; sell price can be different
-          sell_quantity = total_quantity_of_buys
-          print ('Price is above takeprofit. SELL. Time: %s'%cur_date_string) #test
+          sell_price = price_current # for tests; sell price can be different
+          sell_quantity = buys_quantity_total
+          print ('Price is above percent_sell_if_above. SELL. Time: %s'%cur_date_string) #test
           print ('SELL PRICE: %f'%sell_price) #test
-          print ('SELL QUANTITY: %f'%total_quantity_of_buys) #test
-          sub_results = []
-          sub_sql = 'SELECT balance, profit FROM bots WHERE user = %s AND account = %s AND strategy = %s'
-          sub_q_tuple = (user, account, comment)
+          print ('SELL QUANTITY: %f'%sell_quantity) #test
+          sell_amount = round(sell_quantity * sell_price, 8) #calculate sell amount (sell_quantity * sell_price)
+          print ('SELL AMOUNT: %f'%sell_amount) #test
+          new_balance = round(balance_total + sell_amount, 8)
+          print ('NEW BALANCE: %f'%new_balance) #test
+          current_profit = round(sell_amount - buys_amount_total, 8)
+          print ('Current profit (Y): %f'%current_profit) #test
+          # percent_profit_current = ((sell_amount - buys_amount_total) * 100) / buys_amount_total
+          # new_profit = round(percent_profit + percent_profit_current, 2)
+          last_step_percent = percent_buy_if_below
+          buys_quantity_total = 0.0
+          buys_amount_total = 0.0
+          profit += current_profit
+          x_symbol_balance_total -= sell_quantity
+          sql = 'UPDATE bots SET balance_total = %s, x_symbol_balance_total = %s, order_num_current = %s, profit = %s, last_step_percent = %s, buys_quantity_total = %s, buys_amount_total = %s WHERE user = %s AND account = %s AND strategy = %s AND enabled = %s'
+          val_tuple = (new_balance, x_symbol_balance_total, 0, profit, last_step_percent, buys_quantity_total, buys_amount_total, user, account, strategy, enabled)
           try:
-            cursor.execute(sub_sql, sub_q_tuple)
-            sub_res = cursor.fetchone()
-            sub_results = list(sub_res)
-          except:
-            print ('Error: unable to fetch data from %s table'%main_table_name)
-            # logging.info('Error: unable to fetch data from %s table'%main_table_name)
-          if sub_results:
-            sell_amount = round(sell_quantity * sell_price, 8) #calculate sell amount (sell_quantity * sell_price)
-            print ('SELL AMOUNT: %f'%sell_amount) #test
-            new_balance = round(sub_results[0] + sell_amount, 8)
-            print ('NEW BALANCE: %f'%new_balance) #test
-            current_profit = round(sell_amount - total_sum_of_buys, 8)
-            print ('Current profit (Y): %f'%current_profit) #test
-            new_profit = round(sub_results[1] + (sell_amount - total_sum_of_buys), 8)
-            sql = 'UPDATE bots SET date = %s, balance = %s, profit = %s, num_active_orders = %s WHERE user = %s AND account = %s AND strategy = %s'
-            val_tuple = (cur_date_string, new_balance, new_profit, 0, user, account, comment)
+            cursor.execute(sql, val_tuple)
+            db.commit()
+            #TRANSACTIONS HISTORY BEGIN
+            new_order_id = 'Order ID: %s'%uuid.uuid4().hex.upper()[0:8] #RANDOM ID FOR TESTS #new_order['clientOrderId'] ##id, order_id, order_type, comment, last_profit, pair, price_current, balance, amount_percent_multiplier, balance_allowed, last_order_amount, price_first_order, percent_buy_if_below, order_num_current_limit, percent_sell_if_above, order_num_current, total_sum_of_trades, buys_quantity_total
+            sql = 'INSERT INTO transactions ({0}) VALUES ({1})'.format(', '.join('{}'.format(TRANSACTIONS_COLUMNS[i]) for i in range(len(TRANSACTIONS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(TRANSACTIONS_COLUMNS))))
+            val_tuple = (cur_date_string, user, account, 'BUY', pair_y_symbol, sell_amount, new_balance, new_order_id)
             try:
               cursor.execute(sql, val_tuple)
               db.commit()
-              sub_sql = 'DELETE FROM events WHERE order_id = %s'
-              sub_q_tuple = (order_id,)
-              try:
-                cursor.execute(sub_sql, sub_q_tuple)
-                db.commit()
-              except:
-                db.rollback()
-                print ('Error: unable to delete row in %s table'%table_name)
-                # logging.info('Error: unable to delete row in %s table'%table_name)
-            except:
+            except (MySQLdb.Error, MySQLdb.Warning) as e:
               db.rollback()
-              print ('Error: unable to update data in %s table'%main_table_name)
-              # logging.info('Error: unable to update data in %s table'%main_table_name)
+              print ('Error: unable to insert data into %s table'%table_name)
+              print(e.args[0],e.args[1])
+              # logging.info('Error: unable to insert data into %s table'%table_name)
+            sql = 'INSERT INTO transactions ({0}) VALUES ({1})'.format(', '.join('{}'.format(TRANSACTIONS_COLUMNS[i]) for i in range(len(TRANSACTIONS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(TRANSACTIONS_COLUMNS))))
+            val_tuple = (cur_date_string, user, account, 'SELL', pair_x_symbol, sell_quantity, x_symbol_balance_total, new_order_id)
+            try:
+              cursor.execute(sql, val_tuple)
+              db.commit()
+            except (MySQLdb.Error, MySQLdb.Warning) as e:
+              db.rollback()
+              print ('Error: unable to insert data into %s table'%table_name)
+              print(e.args[0],e.args[1])
+              # logging.info('Error: unable to insert data into %s table'%table_name)
+            #TRANSACTIONS HISTORY END
+          except:
+            db.rollback()
+            print ('Error: unable to update data in %s table'%main_table_name)
+            # logging.info('Error: unable to update data in %s table'%main_table_name)
       cursor.close()
       db.close()
     except (MySQLdb.Error, MySQLdb.Warning) as e:
@@ -218,60 +204,87 @@ def process_user_orders(orders_list):
     
 #if active orders < 0 -- create first order
 #input: users_list (list of rows (tuples) from bots table)
-def process_user_operations(users_list):
-  if users_list:
-    table_name = 'events'
-    sub_table_name = 'bots'
+def process_first_orders(bots_list): #open first orders
+  if bots_list:
+    table_name = 'transactions'
+    main_table_name = 'bots'
     try:
       db = MySQLdb.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
       cursor = db.cursor()
-      for i in range(len(users_list)):
-        user = users_list[i][0]
-        account = users_list[i][1]
-        access = users_list[i][2]
-        balance = users_list[i][3]
-        strategy = users_list[i][4]
-        enabled = users_list[i][5]
-        num_active_orders = users_list[i][6] #TOTAL EXECUTED ORDERS OF A SINGLE CYCLE (of a single row from events table)
-        initial_sum = users_list[i][7]
-        sum_percent_multiplier = users_list[i][8]
-        takeprofit = users_list[i][9]
-        percent_step_insurance_order = users_list[i][10]
-        order_num_limit = users_list[i][11]
-        maxbal = users_list[i][12]
-        pair = users_list[i][13]
-        initial_price = users_list[i][14]
-        #Calculations from here
-        if maxbal > balance:
-          maxbal = balance
-        if balance >= initial_sum:
-          initial_quantity = round(initial_sum / initial_price, 8)
+      for i in range(len(bots_list)):
+        user = bots_list[i][0]
+        account = bots_list[i][1]
+        access = bots_list[i][2]
+        strategy = bots_list[i][3]
+        enabled = bots_list[i][4]
+        balance_total = bots_list[i][5]
+        balance_allowed = bots_list[i][6]
+        amount_first_order = bots_list[i][7]
+        amount_percent_multiplier = bots_list[i][8]
+        order_num_current = bots_list[i][9] #ORDERS EXECUTED IN SINGLE CYCLE (int)
+        order_num_current_limit = bots_list[i][10] #MAX ORDERS TOTAL (int)
+        percent_sell_if_above = bots_list[i][11] #POSITIVE PERCENTAGE VALUE (XX.YY%)
+        percent_buy_if_below = bots_list[i][12] # NEGATIVE PERCENTAGE VALUE (-XX.YY%)
+        pair = bots_list[i][13]
+        pair_x_symbol = bots_list[i][14]
+        pair_y_symbol = bots_list[i][15]
+        x_symbol_balance_total = bots_list[i][16] 
+        price_current = bots_list[i][17] 
+        price_first_order = bots_list[i][18]
+        buys_amount_total = bots_list[i][19]
+        buys_quantity_total = bots_list[i][20]
+        last_order_amount = bots_list[i][21]
+        last_step_percent = bots_list[i][22]
+        profit = bots_list[i][23] # Amount of Y symbol (decimal(20,8))
+        if balance_total < balance_allowed:
+          balance_allowed = balance_total
+        if balance_allowed >= amount_first_order:
+          initial_quantity = round(amount_first_order / price_current, 8)
           cur_utime = int(time.time())
           cur_date_string = datetime.datetime.utcfromtimestamp(cur_utime).strftime('%Y-%m-%d %H:%M:%S')
           cur_utime_msec = int(time.time() * 1000)
-          new_balance = round(balance - initial_sum, 8)
-          #Create order here
-          new_order_id = uuid.uuid4().hex.upper()[0:8] #RANDOM ID FOR TESTS ##new_order['clientOrderId'] ##id, order_id, order_type, comment, last_profit, pair, current_price, balance, sum_percent_multiplier, maxbal, last_order_sum, first_order_price, percent_step_insurance_order, order_num_limit, takeprofit, order_num, user, account, total_sum_of_buys, total_quantity_of_buys
-          sql = 'INSERT INTO events (date, order_id, order_type, comment, last_profit, pair, current_price, balance, sum_percent_multiplier, maxbal, last_order_sum, first_order_price, percent_step_insurance_order, order_num_limit, takeprofit, order_num, user, account, total_sum_of_buys, total_quantity_of_buys) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)'
-          val_tuple = (cur_date_string, new_order_id, client.ORDER_TYPE_LIMIT, strategy, 0, pair, initial_price, new_balance, sum_percent_multiplier, maxbal, initial_sum, initial_price, percent_step_insurance_order, order_num_limit, takeprofit, 1, user, account, initial_sum, initial_quantity)
+          new_balance = round(balance_total - amount_first_order, 8)
+          new_balance_allowed = round(balance_allowed - amount_first_order, 8)
+          x_symbol_balance_total += initial_quantity
+          order_num_current += 1
+          price_first_order = price_current
+          last_step_percent = percent_buy_if_below
+          last_order_amount = amount_first_order
+          buys_quantity_total = initial_quantity
+          buys_amount_total = amount_first_order
+          sql = 'UPDATE bots SET price_first_order = %s, balance_total = %s, balance_allowed = %s, x_symbol_balance_total = %s, order_num_current = %s, last_order_amount = %s, last_step_percent = %s, buys_quantity_total = %s, buys_amount_total = %s WHERE user = %s AND account = %s AND strategy = %s AND enabled = %s'
+          val_tuple = (price_first_order, new_balance, new_balance_allowed, x_symbol_balance_total, order_num_current, last_order_amount, last_step_percent, buys_quantity_total, buys_amount_total, user, account, strategy, enabled)
           try:
             cursor.execute(sql, val_tuple)
             db.commit()
-            sub_sql = 'UPDATE bots SET balance = %s, num_active_orders = %s WHERE user = %s AND account = %s AND strategy = %s'
-            sub_val_tuple = (new_balance, 1, user, account, strategy)
+            #TRANSACTION HISTORY BEGIN
+            new_order_id = 'Order ID: %s'%uuid.uuid4().hex.upper()[0:8] #RANDOM ID FOR TESTS #new_order['clientOrderId'] ##id, order_id, order_type, comment, last_profit, pair, price_current, balance, amount_percent_multiplier, balance_allowed, last_order_amount, price_first_order, percent_buy_if_below, order_num_current_limit, percent_sell_if_above, order_num_current, total_sum_of_trades, buys_quantity_total
+            sql = 'INSERT INTO transactions ({0}) VALUES ({1})'.format(', '.join('{}'.format(TRANSACTIONS_COLUMNS[i]) for i in range(len(TRANSACTIONS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(TRANSACTIONS_COLUMNS))))
+            val_tuple = (cur_date_string, user, account, 'SELL', pair_y_symbol, amount_first_order, new_balance, new_order_id)
             try:
-              cursor.execute(sub_sql, sub_val_tuple)
+              cursor.execute(sql, val_tuple)
               db.commit()
             except (MySQLdb.Error, MySQLdb.Warning) as e:
               db.rollback()
-              print ('Error: unable to update data in %s table'%sub_table_name)
+              print ('Error: unable to insert data into %s table'%table_name)
               print(e.args[0],e.args[1])
-              # logging.info('Error: unable to update data in %s table'%sub_table_name)
+              # logging.info('Error: unable to insert data into %s table'%table_name)
+            sql = 'INSERT INTO transactions ({0}) VALUES ({1})'.format(', '.join('{}'.format(TRANSACTIONS_COLUMNS[i]) for i in range(len(TRANSACTIONS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(TRANSACTIONS_COLUMNS))))
+            val_tuple = (cur_date_string, user, account, 'BUY', pair_x_symbol, initial_quantity, x_symbol_balance_total, new_order_id)
+            try:
+              cursor.execute(sql, val_tuple)
+              db.commit()
+            except (MySQLdb.Error, MySQLdb.Warning) as e:
+              db.rollback()
+              print ('Error: unable to insert data into %s table'%table_name)
+              print(e.args[0],e.args[1])
+              # logging.info('Error: unable to insert data into %s table'%table_name
+            #TRANSACTION HISTORY END
           except (MySQLdb.Error, MySQLdb.Warning) as e:
             db.rollback()
-            print ('Error: unable to insert data into %s table'%table_name)
+            print ('Error: unable to update data in %s table'%main_table_name)
             print(e.args[0],e.args[1])
-            # logging.info('Error: unable to insert data into %s table'%table_name)
+            # logging.info('Error: unable to update data in %s table'%main_table_name)
       cursor.close()
       db.close()
     except (MySQLdb.Error, MySQLdb.Warning) as e:
@@ -281,126 +294,12 @@ def process_user_operations(users_list):
  
 ###############################################SCRIPTS FOR TEST################################################
 
-BINANCE_PUBLIC_SERVER = 'https://api.binance.com'
-BINANCE_METHODS = {'tickers' : '/api/v3/ticker/price', 'history' : '/api/v1/klines', 'trades' : '/api/v1/historicalTrades', 'limit_order' : '/api/v1/order'}
-BINANCE_NAME = 'Binance'
-MAIN_TICKERS = {BINANCE_NAME : ('BTCUSDT', 'ETHUSDT', 'LTCUSDT', 'XRPUSDT', 'EOSUSDT', 'XLMUSDT', 'ADAUSDT', 'BCHABCUSDT'), KRAKEN_NAME : ('XXBTZUSD', 'XETHZUSD', 'XLTCZUSD', 'XXRPZUSD', 'EOSUSD', 'XXLMZUSD', 'ADAUSD', 'BCHUSD')}
-UTC_INTERVALS = {'minute' : 60, 'hour' : 3600, 'day' : 86400, 'week' : 604800}
-
-#Request external sources
-def get_ext_sources_data(api_url, source_name, method=None, opt_params=None, **data_dict):
-  req_url = api_url
-  if method:
-    req_url += method
-  response = requests.get(req_url, opt_params, **data_dict)
-  # print(response.url) #test
-  if response.status_code == requests.codes.ok:
-    resp_result = response.json()
-    # logging.info('Connect to %s: success'%source_name)
-    return resp_result
-  else:
-    # logging.info('Connect to %s: failure'%source_name)
-    # logging.info('Connect to %s: error %d'%(source_name, response.status_code))
-    return response.status_code
-
-def get_Binance_OHLC_data(ticker, interval, start_time=None, end_time=None, limit=None): #limit (default 500, max 1000)
-  add_data = OrderedDict([('symbol', ticker),('interval', interval),('startTime', start_time),('endTime', end_time),('limit', limit)])
-  bn_req = get_ext_sources_data(BINANCE_PUBLIC_SERVER, BINANCE_NAME, method=BINANCE_METHODS['history'], opt_params=add_data)
-  return bn_req
-
-def get_Binance_historical_klines(dt_end, interval_str, utc_shift, lim=None):
-  end = convert_datetime_to_timestamp(dt_end)
-  end_msec = end * 1000
-  start = end - utc_shift
-  start_msec = start * 1000
-  output_dict = {}
-  for ticker in range(len(MAIN_TICKERS[BINANCE_NAME])):
-    req = get_Binance_OHLC_data(MAIN_TICKERS[BINANCE_NAME][ticker], BINANCE_INTERVALS[interval_str], start_time=start_msec, end_time=end_msec, limit=lim)
-    output_dict.update({MAIN_TICKERS[BINANCE_NAME][ticker] : req})
-  return output_dict
-
-def get_prices_generator(prices_list):
-  price_gen = (x for x in range(len(prices_list)))
-  return price_gen
-
-def get_Binance_prices_list(ticker, interval, periods_num):
-  prices_list = []
-  utc_shift = UTC_INTERVALS[interval] * periods_num
-  req = get_Binance_historical_klines(PRESENT_DATE, interval, utc_shift)
-  for i in range(len(req[ticker])):
-    high_low_avg = (float(req[ticker][i][2]) + float(req[ticker][i][3])) / 2
-    hl_round = round(high_low_avg, 8)
-    prices_list.append(hl_round)
-  return prices_list
-
-def update_percent_step_insurance_order(value):
-  table_name = 'events'
-  bots_name = 'bots'
+def update_price_first_order(price, pair):
+  table_name = 'bots'
   try:
     db = MySQLdb.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
     cursor = db.cursor()
-    events_sql = 'UPDATE events SET percent_step_insurance_order = %s'
-    events_val_tuple = (value,)
-    try:
-      cursor.execute(events_sql, events_val_tuple)
-      db.commit()
-    except (MySQLdb.Error, MySQLdb.Warning) as e:
-      db.rollback()
-      print ('Error: unable to update data in %s table'%table_name)
-      print(e.args[0],e.args[1])
-      # logging.info('Error: unable to update data in %s table'%table_name)
-    bots_sql = 'UPDATE bots SET percent_step_insurance_order = %s'
-    bots_val_tuple = (value,)
-    try:
-      cursor.execute(bots_sql, bots_val_tuple)
-      db.commit()
-    except (MySQLdb.Error, MySQLdb.Warning) as e:
-      db.rollback()
-      print ('Error: unable to update data in %s table'%bots_name)
-      print(e.args[0],e.args[1])
-      # logging.info('Error: unable to update data in %s table'%bots_name)
-  except (MySQLdb.Error, MySQLdb.Warning) as e:
-    print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
-    # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
-    #return e.args[0]
-
-def update_takeprofit(value):
-  table_name = 'events'
-  bots_name = 'bots'
-  try:
-    db = MySQLdb.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
-    cursor = db.cursor()
-    events_sql = 'UPDATE events SET takeprofit = %s'
-    events_val_tuple = (value,)
-    try:
-      cursor.execute(events_sql, events_val_tuple)
-      db.commit()
-    except (MySQLdb.Error, MySQLdb.Warning) as e:
-      db.rollback()
-      print ('Error: unable to update data in %s table'%table_name)
-      print(e.args[0],e.args[1])
-      # logging.info('Error: unable to update data in %s table'%table_name)
-    bots_sql = 'UPDATE bots SET takeprofit = %s'
-    bots_val_tuple = (value,)
-    try:
-      cursor.execute(bots_sql, bots_val_tuple)
-      db.commit()
-    except (MySQLdb.Error, MySQLdb.Warning) as e:
-      db.rollback()
-      print ('Error: unable to update data in %s table'%bots_name)
-      print(e.args[0],e.args[1])
-      # logging.info('Error: unable to update data in %s table'%bots_name)
-  except (MySQLdb.Error, MySQLdb.Warning) as e:
-    print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
-    # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
-    #return e.args[0]
-
-def update_first_order_price(price, pair):
-  table_name = 'events'
-  try:
-    db = MySQLdb.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
-    cursor = db.cursor()
-    events_sql = 'UPDATE events SET first_order_price = %s WHERE pair = %s'
+    events_sql = 'UPDATE bots SET price_first_order = %s WHERE pair = %s'
     events_val_tuple = (price, pair)
     try:
       cursor.execute(events_sql, events_val_tuple)
@@ -415,32 +314,51 @@ def update_first_order_price(price, pair):
     # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
     #return e.args[0]
 
-def update_current_price_in_events(price, pair):
-  table_name = 'events'
+def update_column(table, column, value):
   try:
     db = MySQLdb.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
     cursor = db.cursor()
-    events_sql = 'UPDATE events SET current_price = %s WHERE pair = %s'
-    events_val_tuple = (price, pair)
+    bots_sql = 'UPDATE {0} SET {1} = %s'.format(table, column)
+    bots_val_tuple = (value,)
     try:
-      cursor.execute(events_sql, events_val_tuple)
+      cursor.execute(bots_sql, bots_val_tuple)
       db.commit()
     except (MySQLdb.Error, MySQLdb.Warning) as e:
       db.rollback()
-      print ('Error: unable to update data in %s table'%table_name)
+      print ('Error: unable to update data in current table')
       print(e.args[0],e.args[1])
-      # logging.info('Error: unable to update data in %s table'%table_name)
+      # logging.info('Error: unable to update data in %s table'%bots_name)
   except (MySQLdb.Error, MySQLdb.Warning) as e:
     print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
     # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
     #return e.args[0]
 
-def update_price_bots(price, pair):
+def update_balance_allowed_bots(amount, pair):
   bots_name = 'bots'
   try:
     db = MySQLdb.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
     cursor = db.cursor()
-    bots_sql = 'UPDATE bots SET price = %s WHERE pair = %s'
+    bots_sql = 'UPDATE bots SET balance_allowed = %s WHERE pair = %s'
+    bots_val_tuple = (amount, pair)
+    try:
+      cursor.execute(bots_sql, bots_val_tuple)
+      db.commit()
+    except (MySQLdb.Error, MySQLdb.Warning) as e:
+      db.rollback()
+      print ('Error: unable to update data in %s table'%bots_name)
+      print(e.args[0],e.args[1])
+      # logging.info('Error: unable to update data in %s table'%bots_name)
+  except (MySQLdb.Error, MySQLdb.Warning) as e:
+    print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
+    # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
+    #return e.args[0]
+
+def update_price_current_bots(price, pair):
+  bots_name = 'bots'
+  try:
+    db = MySQLdb.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
+    cursor = db.cursor()
+    bots_sql = 'UPDATE bots SET price_current = %s WHERE pair = %s'
     bots_val_tuple = (price, pair)
     try:
       cursor.execute(bots_sql, bots_val_tuple)
@@ -455,81 +373,49 @@ def update_price_bots(price, pair):
     # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
     #return e.args[0]
 
-def update_num_active_orders_bots(value):
-  bots_name = 'bots'
+def clear_table(table):
   try:
     db = MySQLdb.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
     cursor = db.cursor()
-    bots_sql = 'UPDATE bots SET num_active_orders = %s'
-    bots_val_tuple = (value,)
+    sql = 'DELETE FROM {}'.format(table)
     try:
-      cursor.execute(bots_sql, bots_val_tuple)
+      cursor.execute(sql)
       db.commit()
     except (MySQLdb.Error, MySQLdb.Warning) as e:
       db.rollback()
-      print ('Error: unable to update data in %s table'%bots_name)
-      print(e.args[0],e.args[1])
-      # logging.info('Error: unable to update data in %s table'%bots_name)
-  except (MySQLdb.Error, MySQLdb.Warning) as e:
-    print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
-    # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
-    #return e.args[0]
-
-def clear_mysql_bots():
-  table_name = 'bots'
-  try:
-    db = MySQLdb.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
-    cursor = db.cursor()
-    sub_sql = 'DELETE FROM bots WHERE access = %s'
-    sub_q_tuple = (1,)
-    try:
-      cursor.execute(sub_sql, sub_q_tuple)
-      db.commit()
-    except (MySQLdb.Error, MySQLdb.Warning) as e:
-      db.rollback()
-      print ('Error: unable to delete row in %s table'%table_name)
+      print ('Error: unable to clear current table')
       print(e.args[0],e.args[1])
       # logging.info('Error: unable to delete row in %s table'%table_name)
   except (MySQLdb.Error, MySQLdb.Warning) as e:
     print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
     # logging.info('Connect to table 'bots' of MSQL database error: %d (%s)'%(e.args[0],e.args[1])
 
-def clear_mysql_events():
-  table_name = 'events'
-  try:
-    db = MySQLdb.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
-    cursor = db.cursor()
-    sub_sql = 'DELETE FROM events WHERE id = %s'
-    sub_q_tuple = (55,) #DEFAULT id value for tests
-    try:
-      cursor.execute(sub_sql, sub_q_tuple)
-      db.commit()
-    except (MySQLdb.Error, MySQLdb.Warning) as e:
-      db.rollback()
-      print ('Error: unable to delete row in %s table'%table_name)
-      print(e.args[0],e.args[1])
-      # logging.info('Error: unable to delete row in %s table'%table_name)
-  except (MySQLdb.Error, MySQLdb.Warning) as e:
-    print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
-    # logging.info('Connect to table 'bots' of MSQL database error: %d (%s)'%(e.args[0],e.args[1])
-
-def create_test_mysql_bots(num_rows, new_balance, sum_percent_multiplier, initial_sum, percent_step_insurance_order, takeprofit):
+def create_test_mysql_bots(num_rows, new_balance, amount_percent_multiplier, amount_first_order, percent_buy_if_below, percent_sell_if_above):
   table_name = 'bots'
-  order_num_limit = 10
-  # maxbal = 0.0
+  balance_allowed = 100.0
+  order_num_current = 0
+  order_num_current_limit = 10
   pair = 'X/Y'
-  price = 100.7777
+  pair_x_symbol = 'X'
+  pair_y_symbol = 'Y'
+  x_symbol_balance_total = 0.0
+  price_current = 100.7777
+  price_first_order = 100.7777
+  buys_amount_total = 0.0
+  buys_quantity_total = 0.0
+  last_order_amount = 0.0
+  last_step_percent = 0.0
   profit = 0.0
   try:
     db = MySQLdb.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
     cursor = db.cursor()
-    sql = 'INSERT INTO bots (id, user, account, access, balance, strategy, enabled, num_active_orders, initial_sum, sum_percent_multiplier, takeprofit, percent_step_insurance_order, order_num_limit, maxbal, pair, price, profit, date) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)'
+    sql = 'INSERT INTO bots ({0}) VALUES ({1})'.format(', '.join('{}'.format(BOTS_COLUMNS[i]) for i in range(len(BOTS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(BOTS_COLUMNS))))
     for i in range(num_rows):
       new_user = uuid.uuid4().hex.upper()[0:8]
       new_account = uuid.uuid4().hex.upper()[0:10]
       cur_utime = int(time.time())
       date = datetime.datetime.utcfromtimestamp(cur_utime).strftime('%Y-%m-%d %H:%M:%S')
-      val_tuple = (i, new_user, new_account, 1, new_balance, 'long', 'on', 0, initial_sum, sum_percent_multiplier, takeprofit, percent_step_insurance_order, order_num_limit, new_balance, pair, price, profit, date)
+      val_tuple = (new_user, new_account, 1, 'long', 1, new_balance, balance_allowed, amount_first_order, amount_percent_multiplier, order_num_current, order_num_current_limit, percent_sell_if_above, percent_buy_if_below, pair, pair_x_symbol, pair_y_symbol, x_symbol_balance_total, price_current, price_first_order, buys_amount_total, buys_quantity_total, last_order_amount, last_step_percent, profit)
       try:
         cursor.execute(sql, val_tuple)
         db.commit()
@@ -545,20 +431,40 @@ def create_test_mysql_bots(num_rows, new_balance, sum_percent_multiplier, initia
     print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
     # logging.info('Connect to table 'bots' of MSQL database error: %d (%s)'%(e.args[0],e.args[1])
 
+def get_prices_generator(prices_list):
+  price_gen = (x for x in range(len(prices_list)))
+  return price_gen
+
+#SCRIPTS FOR TESTS END
+
 if __name__ == '__main__':
-  pl = get_Binance_prices_list('BTCUSDT', 'day', 14) #Create a list of average historical prices of a period
-  # update_first_order_price(pl[0], 'X/Y') #Update first_order_price column of events table where pair is 'X/Y'
-  update_price_bots(pl[0], 'X/Y') #Update price column of the bots table where pair is 'X/Y'
-  update_num_active_orders_bots(0) #Update num_active_orders column of the bots table
-  data = get_data_from_mysql_db('long') # Get data from events and bots tables where strategy/comment is 'long'
-  process_user_operations(data[0]) #Insert rows into events table (initial orders)
-  # update_percent_step_insurance_order(-1.0) #Update percent_step_insurance_order column in bots and events
-  # update_takeprofit(1.0) #Update takeprofit column in bots and events
+  # update_price_first_order(pl[0], 'X/Y') #Update price_first_order column of events table where pair is 'X/Y'
+  # update_order_num_current_bots(0) #Update num_active_orders column of the bots table
+  # SET DEFAULT VALUES
+  # update_column('bots', 'amount_first_order', 10.0)
+  # update_column('bots', 'buys_quantity_total', 0.0)
+  # update_column('bots', 'profit', 0.0)
+  # update_column('bots', 'buys_amount_total', 0.0)
+  # update_column('bots', 'last_step_percent', 0.0)
+  # update_column('bots', 'last_order_amount', 0.0)
+  # update_column('bots', 'order_num_current', 0.0)
+  # update_column('bots', 'balance_total', 700.0)
+  # update_column('bots', 'balance_allowed', 300.0)
+  # update_column('bots', 'x_symbol_balance_total', 0.0)
+  # SET DEFAULT VALUES END
+  prices = [3550.1, 3500.1, 3450.1, 3400.1, 3350.1, 3300.1, 3250.1, 3200.1]
+  #pl = prices
+  pl = prices[::-1] #Reversed list
+  update_price_current_bots(pl[3], 'X/Y') #Update price column of the bots table where pair is 'X/Y'
+  data = mysql_db_get_data_from_bots('long') # Get data from events and bots tables where strategy/comment is 'long'
+  # print (data)
+  process_first_orders(data[0]) #initial orders
   pg = get_prices_generator(pl[1:]) #Create generator from a prices list
   print ('START--- First order price: %s'%pl[0])
   while True:
-    data = get_data_from_mysql_db('long')
-    process_user_orders(data[1])
+    data = mysql_db_get_data_from_bots('long')
+    process_auto_trade(data[1])
     index = next(pg)
-    update_current_price_in_events(pl[index], 'X/Y')
+    print ('Index: %d'%index)
+    update_price_current_bots(pl[index], 'X/Y')
     time.sleep(10)
