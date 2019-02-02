@@ -16,9 +16,7 @@ TRANSACTIONS_COLUMNS = ('date', 'user', 'account', 'type', 'symbol', 'amount', '
 #output: 2 lists of tuples
 def mysql_db_get_data_from_bots(strategy):
   table_name = 'bots'
-  # sub_table_name = 'transactions'
   results_from_bots_list = []
-  # results_from_events_list = []
   first_trade_list = []
   try:
     db = MySQLdb.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
