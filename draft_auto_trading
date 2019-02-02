@@ -113,7 +113,7 @@ def process_auto_trade(bots_list):
               cursor.execute(sql, val_tuple)
               db.commit()
               #TRANSACTIONS HISTORY BEGIN
-              new_order_id = 'Order ID: %s'%uuid.uuid4().hex.upper()[0:8] #RANDOM ID FOR TESTS #new_order['clientOrderId'] ##id, order_id, order_type, comment, last_profit, pair, price_current, balance, amount_percent_multiplier, balance_allowed, last_order_amount, price_first_order, percent_buy_if_below, order_num_current_limit, percent_sell_if_above, order_num_current, total_sum_of_trades, buys_quantity_total
+              new_order_id = 'Order ID: %s'%uuid.uuid4().hex.upper()[0:8] #RANDOM ID FOR TESTS #new_order['clientOrderId']
               sql = 'INSERT INTO transactions ({0}) VALUES ({1})'.format(', '.join('{}'.format(TRANSACTIONS_COLUMNS[i]) for i in range(len(TRANSACTIONS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(TRANSACTIONS_COLUMNS))))
               val_tuple = (cur_date_string, user, account, 'SELL', pair_y_symbol, order_amount, new_balance, new_order_id)
               try:
