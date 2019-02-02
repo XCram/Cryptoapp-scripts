@@ -57,8 +57,8 @@ def process_auto_trade(bots_list):
         access = bots_list[i][2]
         strategy = bots_list[i][3]
         enabled = bots_list[i][4]
-        balance_total = bots_list[i][5]
-        balance_allowed = bots_list[i][6]
+        balance_total = bots_list[i][5] #Y BALANCE OF X/Y PAIR
+        balance_allowed = bots_list[i][6] #Y BALANCE OF X/Y PAIR LIMIT FOR TRADE
         amount_first_order = bots_list[i][7]
         amount_percent_multiplier = bots_list[i][8]
         order_num_current = bots_list[i][9] #ORDERS EXECUTED IN SINGLE CYCLE (int)
@@ -66,9 +66,9 @@ def process_auto_trade(bots_list):
         percent_sell_if_above = bots_list[i][11] #POSITIVE PERCENTAGE VALUE (XX.YY%)
         percent_buy_if_below = bots_list[i][12] # NEGATIVE PERCENTAGE VALUE (-XX.YY%)
         pair = bots_list[i][13]
-        pair_x_symbol = bots_list[i][14]
-        pair_y_symbol = bots_list[i][15]
-        x_symbol_balance_total = bots_list[i][16] 
+        pair_x_symbol = bots_list[i][14] # X SYMBOL OF X/Y PAIR
+        pair_y_symbol = bots_list[i][15] # Y SYMBOL OF X/Y PAIR
+        x_symbol_balance_total = bots_list[i][16] #X BALANCE OF X/Y PAIR
         price_current = bots_list[i][17] 
         price_first_order = bots_list[i][18]
         buys_amount_total = bots_list[i][19]
@@ -167,7 +167,7 @@ def process_auto_trade(bots_list):
             cursor.execute(sql, val_tuple)
             db.commit()
             #TRANSACTIONS HISTORY BEGIN
-            new_order_id = 'Order ID: %s'%uuid.uuid4().hex.upper()[0:8] #RANDOM ID FOR TESTS #new_order['clientOrderId'] ##id, order_id, order_type, comment, last_profit, pair, price_current, balance, amount_percent_multiplier, balance_allowed, last_order_amount, price_first_order, percent_buy_if_below, order_num_current_limit, percent_sell_if_above, order_num_current, total_sum_of_trades, buys_quantity_total
+            new_order_id = 'Order ID: %s'%uuid.uuid4().hex.upper()[0:8] #RANDOM ID FOR TESTS #new_order['clientOrderId']
             sql = 'INSERT INTO transactions ({0}) VALUES ({1})'.format(', '.join('{}'.format(TRANSACTIONS_COLUMNS[i]) for i in range(len(TRANSACTIONS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(TRANSACTIONS_COLUMNS))))
             val_tuple = (cur_date_string, user, account, 'BUY', pair_y_symbol, sell_amount, new_balance, new_order_id)
             try:
