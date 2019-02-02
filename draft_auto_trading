@@ -42,7 +42,7 @@ def mysql_db_get_data_from_bots(strategy):
     # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
     #return e.args[0]
 
-#if active orders > 0 -- process them here
+#if order_num_current > 0 -- process them here
 #input: bots_list (list of rows (tuples) from bots table)
 def process_auto_trade(bots_list):
   if bots_list:
@@ -200,7 +200,7 @@ def process_auto_trade(bots_list):
       # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
       #return e.args[0]
     
-#if active orders = 0 -- create first order
+#if order_num_current = 0 -- create first order
 #input: bots_list (list of rows (tuples) from bots table)
 def process_first_orders(bots_list): #open first orders
   if bots_list:
