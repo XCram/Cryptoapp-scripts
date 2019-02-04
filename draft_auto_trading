@@ -454,7 +454,7 @@ if __name__ == '__main__':
   #pl = prices
   pl = prices[::-1] #Reversed list
   update_price_current_bots(pl[3], 'X/Y') #Update price column of the bots table where pair is 'X/Y'
-  data = mysql_db_get_data_from_bots('long') # Get data from events and bots tables where strategy/comment is 'long'
+  data = mysql_db_get_data_from_bots('long') # Get data from bots table where strategy is 'long'
   # print (data)
   process_first_orders(data[0]) #initial orders
   pg = get_prices_generator(pl[1:]) #Create generator from a prices list
