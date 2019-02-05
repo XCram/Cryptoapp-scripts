@@ -26,7 +26,7 @@ def make_Binance_pair_currency_dict():
   pair_currency_dict = {}
   req = get_Binance_exchange_info()
   for i in range(len(req['symbols'])):
-    pair_currency_dict.update({req['symbols'][i]['symbol'] : [req['symbols'][i]['baseAsset'], req['symbols'][i]['quoteAsset']]})
+    pair_currency_dict.update({req['symbols'][i]['symbol'] : (req['symbols'][i]['baseAsset'], req['symbols'][i]['quoteAsset'])})
   return pair_currency_dict
 
 def get_Binance_prices(ticker=None):
