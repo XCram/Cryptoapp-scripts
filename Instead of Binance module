@@ -1,0 +1,85 @@
+import requests
+
+BINANCE_PUBLIC_SERVER = 'https://api.binance.com'
+BINANCE_METHODS = {'prices' : '/api/v3/ticker/price', 'history' : '/api/v1/klines', 'trades' : '/api/v1/historicalTrades', 'test_order' : '/api/v3/order/test', 'order' : '/api/v3/order', 'account' : '/api/v3/account', 'best_bids_asks_qty' : '/api/v3/ticker/bookTicker', 'exchange_info' : '/api/v1/exchangeInfo'}
+
+def Binance_public_GET_request(req_url, add_data=None):
+  success = False
+  try:
+    response = requests.get(req_url, add_data)
+    if response.status_code == requests.codes.ok:
+      resp_result = response.json()
+      success = True
+      return success, resp_result
+    else:
+      return success, response.status_code
+  except requests.exceptions.RequestException as e:
+    return success, e
+
+def get_Binance_exchange_info():
+  req_url = BINANCE_PUBLIC_SERVER + BINANCE_METHODS['exchange_info']
+  req_info = Binance_public_GET_request(req_url)
+  if req_info[0]: #success
+    return req_info[1]
+
+def make_Binance_pair_currency_dict():
+  pair_currency_dict = {}
+  req = get_Binance_exchange_info()
+  for i in range(len(req['symbols'])):
+    pair_currency_dict.update({req['symbols'][i]['symbol'] : [req['symbols'][i]['baseAsset'], req['symbols'][i]['quoteAsset']]})
+  return pair_currency_dict
+
+def get_Binance_prices(ticker=None):
+  req_url = BINANCE_PUBLIC_SERVER + BINANCE_METHODS['prices']
+  add_data = None
+  if ticker:
+    add_data = {'symbol': ticker}
+  req_info = Binance_public_GET_request(req_url, add_data)
+  if req_info[0]: #success
+    return req_info[1]
+
+def get_Binance_best_bids_asks(ticker=None):
+  req_url = BINANCE_PUBLIC_SERVER + BINANCE_METHODS['best_bids_asks_qty']
+  add_data = None
+  if ticker:
+    add_data = {'symbol': ticker}
+  req_info = Binance_public_GET_request(req_url, add_data)
+  if req_info[0]: #success
+    return req_info[1]
+
+def get_Binance_account_info(api_key, api_secret, recvWindow=None):
+  req_url = BINANCE_PUBLIC_SERVER + BINANCE_METHODS['account']
+  timestamp = int(time.time() * 1000)
+  add_data = {'timestamp': timestamp}
+  if recvWindow:
+    add_data.update({'recvWindow' : recvWindow})
+  encoded_data = urlencode(add_data)
+  sign = hmac.new(api_secret.encode('utf-8'), encoded_data.encode('utf-8'), hashlib.sha256).hexdigest()
+  add_data.update({'signature' : sign})
+  hdrs = {'X-MBX-APIKEY': api_key}
+  success = False
+  try:
+    response = requests.get(req_url, add_data, headers=hdrs)
+    # print(add_data) #test
+    # print(response.url) #test
+    if response.status_code == requests.codes.ok:
+      resp_result = response.json()
+      success = True
+      return success, resp_result
+    else:
+      return success, response.status_code
+  except requests.exceptions.RequestException as e:
+    return success, e
+
+def get_Binance_currency_balance(api_key, api_secret, currency):
+  req = get_Binance_account_info(api_key, api_secret)
+  balance_free = 0.0
+  balance_locked = 0.0
+  if req[0]:
+    for i in range(len(req[1]['balances'])):
+      if req[1]['balances'][i]['asset'] == currency:
+        balance_free = req[1]['balances'][i]['free']
+        balance_locked = req[1]['balances'][i]['locked']
+    return balance_free, balance_locked
+
+PAIR_CUR_DICT = make_Binance_pair_currency_dict() #Make a dict {'X/Y' : ['X', 'Y']}
