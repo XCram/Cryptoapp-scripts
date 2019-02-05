@@ -1,0 +1,57 @@
+import pymysql
+import config
+
+CONF_MYSQL_HOST = config.MySqlConfig.host
+CONF_MYSQL_USER = config.MySqlConfig.mysql_user
+CONF_MYSQL_PASS = config.MySqlConfig.mysql_passwd
+CONF_MYSQL_DB = config.MySqlConfig.db
+
+BOTS_COLUMNS = ('user','name','access','strategy','enabled','volumefirst','volume_value_first_order','volume_percent_first_order','percent_step_insurance_order','cycle_limit','takeprofit','martingale','symbol')
+
+def mysql_db_get_data_from_bots(strategy):
+  table_name = 'bots'
+  results_from_bots_list = []
+  try:
+    db = pymysql.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
+    cursor = db.cursor()
+    sql = 'SELECT {} FROM bots WHERE enabled = %s AND strategy = %s'.format(', '.join('{}'.format(BOTS_COLUMNS[i]) for i in range(len(BOTS_COLUMNS))))
+    q_tuple = (1, strategy)
+    try:
+      cursor.execute(sql, q_tuple)
+      results = cursor.fetchall()
+      for row in results:
+        results_from_bots_list.append(row)
+    except:
+      print ('Error: unable to fetch data from %s table'%table_name)
+      # logging.info('Error: unable to fetch data from %s table'%table_name)
+    cursor.close()
+    db.close()
+    return results_from_bots_list
+  except (pymysql.Error, pymysql.Warning) as e:
+    print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
+    # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
+    #return e.args[0]
+
+def get_keys_from_accesses(access):
+  table_name = 'accesses'
+  keys = []
+  try:
+    db = pymysql.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
+    cursor = db.cursor()
+    sql = 'SELECT api,api_secret FROM accesses WHERE name = %s'
+    q_tuple = (access,)
+    try:
+      cursor.execute(sql, q_tuple)
+      res = cursor.fetchone()
+      keys.extend([res[0], res[1]])
+    except:
+      print ('Error: unable to fetch data from %s table'%table_name)
+    return keys
+  except (pymysql.Error, pymysql.Warning) as e:
+    print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
+    # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
+    #return e.args[0]
+
+if __name__ == '__main__':
+  res = mysql_db_get_data_from_bots('Long')
+  print (res)
