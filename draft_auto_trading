@@ -85,10 +85,9 @@ def process_auto_trade(bots_list):
         print ('SELL if above: %f'%percent_sell_if_above)
         if price_deviation_percent < last_step_percent and order_num_current < order_num_current_limit: #price too low and num executed orders below limit
           #Create new order here (BUY, order_quantity)
-          cur_utime = int(time.time())
-          cur_date_string = datetime.datetime.utcfromtimestamp(cur_utime).strftime('%Y-%m-%d %H:%M:%S')
+          #cur_utime_msec = int(time.time() * 1000)
+          cur_date_string = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
           print ('Price is below last_step_percent. Time: %s'%cur_date_string) #test
-          cur_utime_msec = int(time.time() * 1000)
           order_amount = round(last_order_amount + ((last_order_amount / 100) * amount_percent_multiplier), 8)
           buys_amount_total = round(buys_amount_total + order_amount, 8)
           if balance_allowed >= buys_amount_total:
@@ -140,9 +139,9 @@ def process_auto_trade(bots_list):
               print ('Error: unable to update data in %s table'%main_table_name)
               print(e.args[0],e.args[1])
         elif price_deviation_percent > percent_sell_if_above:
-          #Create new order here (SELL, MARKET, sell_quantity)
-          cur_utime = int(time.time())
-          cur_date_string = datetime.datetime.utcfromtimestamp(cur_utime).strftime('%Y-%m-%d %H:%M:%S')
+          #Create new order here (SELL, MARKET ?, sell_quantity)
+          #cur_utime_msec = int(time.time() * 1000)
+          cur_date_string = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
           sell_price = price_current # for tests; sell price can be different
           sell_quantity = buys_quantity_total
           print ('Price is above percent_sell_if_above. SELL. Time: %s'%cur_date_string) #test
@@ -238,9 +237,8 @@ def process_first_orders(bots_list): #open first orders
           balance_allowed = balance_total
         if balance_allowed >= amount_first_order:
           initial_quantity = round(amount_first_order / price_current, 8)
-          cur_utime = int(time.time())
-          cur_date_string = datetime.datetime.utcfromtimestamp(cur_utime).strftime('%Y-%m-%d %H:%M:%S')
-          cur_utime_msec = int(time.time() * 1000)
+          #cur_utime_msec = int(time.time() * 1000)
+          cur_date_string = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
           new_balance = round(balance_total - amount_first_order, 8)
           new_balance_allowed = round(balance_allowed - amount_first_order, 8)
           x_symbol_balance_total += initial_quantity
