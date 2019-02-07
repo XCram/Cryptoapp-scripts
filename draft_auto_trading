@@ -6,7 +6,7 @@ import uuid
 
 CONF_MYSQL_HOST = config.MySqlConfig.host
 CONF_MYSQL_USER = config.MySqlConfig.mysql_user
-CONF_MYSQL_PASS = config.MySqlConfig.mysql_pass
+CONF_MYSQL_PASS = config.MySqlConfig.mysql_passwd
 CONF_MYSQL_DB = config.MySqlConfig.db
 
 BOTS_COLUMNS = ('user', 'account', 'access', 'strategy', 'enabled', 'balance_total', 'balance_allowed', 'amount_first_order', 'amount_percent_multiplier', 'order_num_current', 'order_num_current_limit', 'percent_sell_if_above', 'percent_buy_if_below', 'pair', 'pair_x_symbol', 'pair_y_symbol', 'x_symbol_balance_total', 'price_current', 'price_first_order', 'buys_amount_total', 'buys_quantity_total', 'last_order_amount', 'last_step_percent', 'profit')
@@ -21,7 +21,7 @@ def mysql_db_get_data_from_bots(strategy):
   try:
     db = MySQLdb.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
     cursor = db.cursor()
-    sql = 'SELECT {} FROM bots WHERE enabled = %s AND strategy = %s'.format(', '.join('{}'.format(BOTS_COLUMNS[i]) for i in range(len(BOTS_COLUMNS))))
+    sql = 'SELECT {0} FROM {1} WHERE enabled = %s AND strategy = %s'.format(', '.join('{}'.format(BOTS_COLUMNS[i]) for i in range(len(BOTS_COLUMNS))), table_name)
     q_tuple = (1, strategy)
     try:
       cursor.execute(sql, q_tuple)
@@ -114,7 +114,7 @@ def process_auto_trade(bots_list):
               db.commit()
               #TRANSACTIONS HISTORY BEGIN
               new_order_id = 'Order ID: %s'%uuid.uuid4().hex.upper()[0:8] #RANDOM ID FOR TESTS #new_order['clientOrderId']
-              sql = 'INSERT INTO transactions ({0}) VALUES ({1})'.format(', '.join('{}'.format(TRANSACTIONS_COLUMNS[i]) for i in range(len(TRANSACTIONS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(TRANSACTIONS_COLUMNS))))
+              sql = 'INSERT INTO {0} ({1}) VALUES ({2})'.format(table_name, ', '.join('{}'.format(TRANSACTIONS_COLUMNS[i]) for i in range(len(TRANSACTIONS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(TRANSACTIONS_COLUMNS))))
               val_tuple = (cur_date_string, user, account, 'SELL', pair_y_symbol, order_amount, new_balance, new_order_id)
               try:
                 cursor.execute(sql, val_tuple)
@@ -124,7 +124,7 @@ def process_auto_trade(bots_list):
                 print ('Error: unable to insert data into %s table'%table_name)
                 print(e.args[0],e.args[1])
                 # logging.info('Error: unable to insert data into %s table'%table_name)
-              sql = 'INSERT INTO transactions ({0}) VALUES ({1})'.format(', '.join('{}'.format(TRANSACTIONS_COLUMNS[i]) for i in range(len(TRANSACTIONS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(TRANSACTIONS_COLUMNS))))
+              sql = 'INSERT INTO {0} ({1}) VALUES ({2})'.format(table_name, ', '.join('{}'.format(TRANSACTIONS_COLUMNS[i]) for i in range(len(TRANSACTIONS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(TRANSACTIONS_COLUMNS))))
               val_tuple = (cur_date_string, user, account, 'BUY', pair_x_symbol, order_quantity, x_symbol_balance_total, new_order_id)
               try:
                 cursor.execute(sql, val_tuple)
@@ -168,7 +168,7 @@ def process_auto_trade(bots_list):
             db.commit()
             #TRANSACTIONS HISTORY BEGIN
             new_order_id = 'Order ID: %s'%uuid.uuid4().hex.upper()[0:8] #RANDOM ID FOR TESTS #new_order['clientOrderId']
-            sql = 'INSERT INTO transactions ({0}) VALUES ({1})'.format(', '.join('{}'.format(TRANSACTIONS_COLUMNS[i]) for i in range(len(TRANSACTIONS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(TRANSACTIONS_COLUMNS))))
+            sql = 'INSERT INTO {0} ({1}) VALUES ({2})'.format(table_name, ', '.join('{}'.format(TRANSACTIONS_COLUMNS[i]) for i in range(len(TRANSACTIONS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(TRANSACTIONS_COLUMNS))))
             val_tuple = (cur_date_string, user, account, 'BUY', pair_y_symbol, sell_amount, new_balance, new_order_id)
             try:
               cursor.execute(sql, val_tuple)
@@ -178,7 +178,7 @@ def process_auto_trade(bots_list):
               print ('Error: unable to insert data into %s table'%table_name)
               print(e.args[0],e.args[1])
               # logging.info('Error: unable to insert data into %s table'%table_name)
-            sql = 'INSERT INTO transactions ({0}) VALUES ({1})'.format(', '.join('{}'.format(TRANSACTIONS_COLUMNS[i]) for i in range(len(TRANSACTIONS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(TRANSACTIONS_COLUMNS))))
+            sql = 'INSERT INTO {0} ({1}) VALUES ({2})'.format(table_name, ', '.join('{}'.format(TRANSACTIONS_COLUMNS[i]) for i in range(len(TRANSACTIONS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(TRANSACTIONS_COLUMNS))))
             val_tuple = (cur_date_string, user, account, 'SELL', pair_x_symbol, sell_quantity, x_symbol_balance_total, new_order_id)
             try:
               cursor.execute(sql, val_tuple)
@@ -257,7 +257,7 @@ def process_first_orders(bots_list): #open first orders
             db.commit()
             #TRANSACTION HISTORY BEGIN
             new_order_id = 'Order ID: %s'%uuid.uuid4().hex.upper()[0:8] #RANDOM ID FOR TESTS #new_order['clientOrderId'] ##id, order_id, order_type, comment, last_profit, pair, price_current, balance, amount_percent_multiplier, balance_allowed, last_order_amount, price_first_order, percent_buy_if_below, order_num_current_limit, percent_sell_if_above, order_num_current, total_sum_of_trades, buys_quantity_total
-            sql = 'INSERT INTO transactions ({0}) VALUES ({1})'.format(', '.join('{}'.format(TRANSACTIONS_COLUMNS[i]) for i in range(len(TRANSACTIONS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(TRANSACTIONS_COLUMNS))))
+            sql = 'INSERT INTO {0} ({1}) VALUES ({2})'.format(table_name, ', '.join('{}'.format(TRANSACTIONS_COLUMNS[i]) for i in range(len(TRANSACTIONS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(TRANSACTIONS_COLUMNS))))
             val_tuple = (cur_date_string, user, account, 'SELL', pair_y_symbol, amount_first_order, new_balance, new_order_id)
             try:
               cursor.execute(sql, val_tuple)
@@ -267,7 +267,7 @@ def process_first_orders(bots_list): #open first orders
               print ('Error: unable to insert data into %s table'%table_name)
               print(e.args[0],e.args[1])
               # logging.info('Error: unable to insert data into %s table'%table_name)
-            sql = 'INSERT INTO transactions ({0}) VALUES ({1})'.format(', '.join('{}'.format(TRANSACTIONS_COLUMNS[i]) for i in range(len(TRANSACTIONS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(TRANSACTIONS_COLUMNS))))
+            sql = 'INSERT INTO {0} ({1}) VALUES ({2})'.format(table_name, ', '.join('{}'.format(TRANSACTIONS_COLUMNS[i]) for i in range(len(TRANSACTIONS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(TRANSACTIONS_COLUMNS))))
             val_tuple = (cur_date_string, user, account, 'BUY', pair_x_symbol, initial_quantity, x_symbol_balance_total, new_order_id)
             try:
               cursor.execute(sql, val_tuple)
