@@ -14,7 +14,7 @@ def mysql_db_get_data_from_bots(strategy):
   try:
     db = pymysql.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
     cursor = db.cursor()
-    sql = 'SELECT {} FROM bots WHERE enabled = %s AND strategy = %s'.format(', '.join('{}'.format(BOTS_COLUMNS[i]) for i in range(len(BOTS_COLUMNS))))
+    sql = 'SELECT {0} FROM {1} WHERE enabled = %s AND strategy = %s'.format(', '.join('{}'.format(BOTS_COLUMNS[i]) for i in range(len(BOTS_COLUMNS))), table_name)
     q_tuple = (1, strategy)
     try:
       cursor.execute(sql, q_tuple)
