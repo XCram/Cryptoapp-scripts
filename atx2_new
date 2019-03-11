@@ -1,0 +1,328 @@
+#!/usr/bin/python
+# -*- coding: UTF-8 -*-
+
+import datetime
+import time
+import pymysql
+import config
+import uuid
+import requests
+# import hmac
+# import hashlib
+# from urllib.parse import urlencode
+
+CONF_MYSQL_HOST = config.MySqlConfig.host
+CONF_MYSQL_USER = config.MySqlConfig.mysql_user
+CONF_MYSQL_PASS = config.MySqlConfig.mysql_passwd
+CONF_MYSQL_DB = config.MySqlConfig.db
+
+BOTS_COLUMNS = ('user','name','access','strategy','enabled','volumefirst','volume_value_first_order','volume_percent_first_order','percent_step_insurance_order','cycle_limit','takeprofit','martingale','symbol')
+EVENTS_COLUMNS = ('date', 'user', 'account', 'type', 'comment', 'price', 'summa', 'balance', 'symbol', 'contractid')
+
+##############################################BINANCE START##########################################
+
+BINANCE_PUBLIC_SERVER = 'https://api.binance.com'
+BINANCE_METHODS = {'prices' : '/api/v3/ticker/price', 'history' : '/api/v1/klines', 'trades' : '/api/v1/historicalTrades', 'test_order' : '/api/v3/order/test', 'order' : '/api/v3/order', 'account' : '/api/v3/account', 'best_bids_asks_qty' : '/api/v3/ticker/bookTicker', 'exchange_info' : '/api/v1/exchangeInfo'}
+
+def Binance_public_GET_request(req_url, add_data=None):
+  success = False
+  try:
+    response = requests.get(req_url, add_data)
+    if response.status_code == requests.codes.ok:
+      resp_result = response.json()
+      success = True
+      return success, resp_result
+    else:
+      return success, response.status_code
+  except requests.exceptions.RequestException as e:
+    return success, e
+
+def get_Binance_prices(ticker=None):
+  req_url = BINANCE_PUBLIC_SERVER + BINANCE_METHODS['prices']
+  add_data = None
+  if ticker:
+    add_data = {'symbol': ticker}
+  req_info = Binance_public_GET_request(req_url, add_data)
+  if req_info[0]: #success
+    return req_info[1]
+
+def get_Binance_exchange_info():
+  req_url = BINANCE_PUBLIC_SERVER + BINANCE_METHODS['exchange_info']
+  req_info = Binance_public_GET_request(req_url)
+  if req_info[0]: #success
+    return req_info[1]
+
+def make_Binance_pair_currency_dict():
+  pair_currency_dict = {}
+  req = get_Binance_exchange_info()
+  for i in range(len(req['symbols'])):
+    pair_currency_dict.update({req['symbols'][i]['symbol'] : (req['symbols'][i]['baseAsset'], req['symbols'][i]['quoteAsset'])})
+  return pair_currency_dict
+
+##############################################BINANCE END##########################################
+
+PAIR_CUR_DICT = make_Binance_pair_currency_dict() #Make a dict {'X/Y' : ['X', 'Y']}
+
+def get_keys_from_accesses(access):
+  table_name = 'accesses'
+  keys = []
+  try:
+    db = pymysql.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
+    cursor = db.cursor()
+    sql = 'SELECT api,api_secret FROM accesses WHERE name = %s'
+    q_tuple = (access,)
+    try:
+      cursor.execute(sql, q_tuple)
+      res = cursor.fetchone()
+      keys.extend([res[0], res[1]])
+    except:
+      print ('Error: unable to fetch data from %s table'%table_name)
+    return keys
+  except (pymysql.Error, pymysql.Warning) as e:
+    print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
+    # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
+    #return e.args[0]
+
+def FAccountInfo(user,account,strategy,symbol1,symbol2,currentprice):
+  try:
+    db = pymysql.connect(CONF_MYSQL_HOST, CONF_MYSQL_USER, CONF_MYSQL_PASS, CONF_MYSQL_DB)
+    cursor = db.cursor()
+    sql = 'SELECT user,account,type,comment,price,summa,balance,symbol,contractid FROM events WHERE user = %s AND account = %s'
+    q_tuple = (user, 'Demo')
+    try:
+      cursor.execute(sql, q_tuple)
+      results = cursor.fetchall()
+      balance1 = 0
+      balance2 = 0
+      lp=0
+      lv=0
+      profit=0
+      sumvol=0
+      id=0
+      for s in results: 
+        type=s[2]
+        comment=s[3]
+        price=s[4]
+        summa=s[5]
+        balance=s[6]
+        symbol=s[7]
+        if(symbol==symbol1): balance1=balance
+        if(symbol==symbol2): balance2=balance
+        if(comment==strategy):
+          #print(" comment  ",comment," type ",type," s ",symbol ," s1 ",symbol1," strategy ",strategy)
+          if(type=='BUY' and symbol==symbol1):
+            lp=price
+            lv=summa
+            id=s[8]
+            profit+=(float(currentprice)-float(price))*float(summa)
+            sumvol+=summa
+          if(type=='SELL' and symbol==symbol1):
+            lp=0
+            lv=0
+            id=id+1
+            profit=0
+            sumvol=0
+      res=[balance1,balance2,lp,lv,id,profit,sumvol]
+      return res
+    except:
+      print ('Error: unable to fetch data from EVENTS table')
+    cursor.close()
+    db.close()
+  except (pymysql.Error, pymysql.Warning) as e:
+    print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
+    # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
+    #return e.args[0]
+
+def FSendOrder(operation,user,strategy,symbol1,symbol2,balance1,balance2,quantity1,quantity2,price,contractid):
+  table_name = 'events'
+  try:
+    db = pymysql.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
+    cursor = db.cursor()
+    cur_date_string = datetime.datetime.now()#.strftime('%Y-%m-%d %H:%M:%S')
+    account = 'Demo'
+    pair_cur_first = symbol2
+    pair_cur_second = symbol1
+    balance_first = balance2
+    balance_second = balance1
+    quantity_first = quantity2
+    quantity_second = quantity1
+    if operation == 'Open':
+      pair_cur_first = symbol1
+      pair_cur_second = symbol2
+      balance_first = balance1
+      balance_second = balance2
+      quantity_first = quantity1
+      quantity_second = quantity2
+    #TRANSACTIONS HISTORY BEGIN
+    sql = 'INSERT INTO {0} ({1}) VALUES ({2})'.format(table_name, ', '.join('{}'.format(EVENTS_COLUMNS[i]) for i in range(len(EVENTS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(EVENTS_COLUMNS))))
+    val_tuple = (cur_date_string, user, account, 'BUY', strategy, price, quantity_first, balance_first, pair_cur_first, contractid)
+    try:
+      cursor.execute(sql, val_tuple)
+      db.commit()
+    except (pymysql.Error, pymysql.Warning) as e:
+      db.rollback()
+      print ('Error: unable to insert data into %s table'%table_name)
+      print(e.args[0],e.args[1])
+      # logging.info('Error: unable to insert data into %s table'%table_name)
+    sql = 'INSERT INTO {0} ({1}) VALUES ({2})'.format(table_name, ', '.join('{}'.format(EVENTS_COLUMNS[i]) for i in range(len(EVENTS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(EVENTS_COLUMNS))))
+    val_tuple = (cur_date_string, user, account, 'SELL', strategy, price, quantity_second, balance_second, pair_cur_second, contractid)
+    try:
+      cursor.execute(sql, val_tuple)
+      db.commit()
+    except (pymysql.Error, pymysql.Warning) as e:
+      db.rollback()
+      print ('Error: unable to insert data into %s table'%table_name)
+      print(e.args[0],e.args[1])
+      # logging.info('Error: unable to insert data into %s table'%table_name
+    #TRANSACTIONS HISTORY END
+    cursor.close()
+    db.close()
+  except (pymysql.Error, pymysql.Warning) as e:
+    print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
+    # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
+    #return e.args[0]
+
+def FBots(strategy):
+  table_name = 'bots'
+  try:
+    db = pymysql.connect(CONF_MYSQL_HOST, CONF_MYSQL_USER, CONF_MYSQL_PASS, CONF_MYSQL_DB)
+    cursor = db.cursor()
+    sql = 'SELECT {0} FROM {1} WHERE enabled = %s AND strategy = %s'.format(', '.join('{}'.format(BOTS_COLUMNS[i]) for i in range(len(BOTS_COLUMNS))), table_name)
+    q_tuple = (1, strategy)
+    try:
+      cursor.execute(sql, q_tuple)
+      results = cursor.fetchall()
+      return results
+    except:
+      print ('Error: unable to fetch data from %s table'%table_name)
+      # logging.info('Error: unable to fetch data from %s table'%table_name)
+    cursor.close()
+    db.close()
+  except (pymysql.Error, pymysql.Warning) as e:
+    print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
+    # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
+    #return e.args[0]
+
+
+def FOrders(bots_list, current_price): #open orders
+  if bots_list:
+    # prices_list = get_Binance_prices()
+    # prices_dict = {}
+    # for i in range(len(prices_list)):
+    # prices_dict.update({prices_list[i]['symbol'] : prices_list[i]['price']})
+    for i in range(len(bots_list)):
+      user = bots_list[i][0]
+      name = bots_list[i][1]
+      access = bots_list[i][2]
+      strategy = bots_list[i][3]
+      enabled = bots_list[i][4]
+      volumefirst = bots_list[i][5]
+      volume_value_first_order = bots_list[i][6]
+      volume_percent_first_order = bots_list[i][7]
+      percent_step_insurance_order = bots_list[i][8]
+      cycle_limit = bots_list[i][9]
+      takeprofit = bots_list[i][10]
+      martingale = bots_list[i][11]
+      symbol = bots_list[i][12]
+
+      symbol1 = PAIR_CUR_DICT[symbol][0]
+      symbol2 = PAIR_CUR_DICT[symbol][1]
+      # current_price = prices_dict[symbol]
+      #print("= current_price ",current_price," lp ",last_price," last_order_amount ",last_order_amount)
+      if volumefirst == 0:
+        order_amount = volume_value_first_order
+        order_quantity = round(float(order_amount) / float(current_price), 8)
+        balance1 = 0.1 #get_currency_Balance(symbol1)
+        balance2 = 100 #get_currency_Balance(symbol2)
+        if balance2 >= order_amount:
+          balance1 += order_quantity
+          balance2 -= order_amount
+          id = 0
+          print ('Buy first time')
+          try:
+            db = pymysql.connect(CONF_MYSQL_HOST, CONF_MYSQL_USER, CONF_MYSQL_PASS, CONF_MYSQL_DB)
+            cursor = db.cursor()
+            sql = 'UPDATE bots SET volumefirst = %s WHERE user = %s AND name = %s'
+            val_tuple = (1, user, name)
+            try:
+              cursor.execute(sql, val_tuple)
+              db.commit()
+            except (pymysql.Error, pymysql.Warning) as e:
+              db.rollback()
+              print ('Error: unable to update data in BOTS table')
+              print(e.args[0],e.args[1])
+          except (pymysql.Error, pymysql.Warning) as e:
+            print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
+            # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
+            #return e.args[0]
+          FSendOrder('Open',user,strategy,symbol1,symbol2,balance1,balance2,order_quantity,order_amount,current_price,id)
+      else:
+        neg_takeprofit = takeprofit * -1
+        info = FAccountInfo(user,name,strategy,symbol1,symbol2,current_price)
+        print(info)
+        balance1 = info[0]
+        balance2 = info[1]
+        last_price = info[2]
+        last_order_quantity = info[3] 
+        id = info[4] 
+        profit = info[5] 
+        sumvol = info[6]
+        price_delta_percent = 0
+        if last_price > 0:
+          price_delta_percent = 100 - float(current_price) * 100 / float(last_price)
+        if price_delta_percent >= percent_step_insurance_order:
+          order_quantity = round(last_order_quantity + (last_order_quantity / 100 * martingale), 8)
+          order_amount = round(float(order_amount) * float(current_price), 8)
+          if balance2 >= order_amount:
+            balance1 = float(balance1) + float(order_quantity)
+            balance2 = float(balance2) - float(order_amount)
+            print ('Buy next')
+            FSendOrder('Open',user,strategy,symbol1,symbol2,balance1,balance2,order_quantity,order_amount,current_price,id)
+        elif price_delta_percent <= neg_takeprofit:
+          print ('Sell')
+          sell_price = current_price
+          sell_quantity = sumvol
+          sell_amount = round(float(sell_quantity) * float(sell_price), 8)
+          FSendOrder('Close',user,strategy,symbol1,symbol2,balance1,balance2,sell_quantity,sell_amount,sell_price,id)
+
+############################################TESTS######################################
+def create_test_mysql_bots(num_rows, volume_value_first_order, percent_step_insurance_order, takeprofit):
+  table_name = 'bots'
+  try:
+    db = pymysql.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
+    cursor = db.cursor()
+    sql = 'INSERT INTO bots ({0}) VALUES ({1})'.format(', '.join('{}'.format(BOTS_COLUMNS[i]) for i in range(len(BOTS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(BOTS_COLUMNS))))
+    for i in range(num_rows):
+      new_user = uuid.uuid4().hex.upper()[0:8]
+      name = uuid.uuid4().hex.upper()[0:9]
+      access = uuid.uuid4().hex.upper()[0:10]
+      cur_utime = int(time.time())
+      #'user','name','access','strategy','enabled','volumefirst','volume_value_first_order','volume_percent_first_order','percent_step_insurance_order','cycle_limit','takeprofit','martingale','symbol'
+      # date = datetime.datetime.utcfromtimestamp(cur_utime).strftime('%Y-%m-%d %H:%M:%S')
+      val_tuple = (new_user, name, access, 'long', 1, 0, volume_value_first_order, 5.5, percent_step_insurance_order, 10, takeprofit, 10.5, 'BTCUSDT')
+      try:
+        cursor.execute(sql, val_tuple)
+        db.commit()
+      except (pymysql.Error, pymysql.Warning) as e:
+        db.rollback()
+        print ('Error: unable to insert data into %s table'%table_name)
+        print(e.args[0],e.args[1])
+        # logging.info('Error: unable to insert data into %s table'%table_name)
+    print ('Closing db')
+    cursor.close()
+    db.close()
+  except (pymysql.Error, pymysql.Warning) as e:
+    print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
+    # logging.info('Connect to table 'bots' of MSQL database error: %d (%s)'%(e.args[0],e.args[1])
+
+####################TESTS END###########################
+
+if __name__ == '__main__':
+  prices = [3550.1, 3500.1, 3450.1, 3400.1, 3350.1, 3300.1, 3250.1, 3200.1] #test
+  price_gen = (x for x in range(len(prices))) #test
+  while True:
+    bots = FBots('long')
+    index = next(price_gen) #test
+    print ('Current price: %s'%prices[index])
+    FOrders(bots, prices[index])
+    time.sleep(5)
