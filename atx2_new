@@ -99,13 +99,15 @@ def FAccountInfo(user,account,strategy,symbol1,symbol2,currentprice):
       profit=0
       sumvol=0
       id=0
-      for s in results: 
+      # reversed_results = results[::-1]
+      for s in results:
         type=s[2]
         comment=s[3]
         price=s[4]
         summa=s[5]
         balance=s[6]
         symbol=s[7]
+        print('Summa: %f'%summa)
         if(symbol==symbol1): balance1=balance
         if(symbol==symbol2): balance2=balance
         if(comment==strategy):
@@ -259,7 +261,7 @@ def FOrders(bots_list, current_price): #open orders
       else:
         neg_takeprofit = takeprofit * -1
         info = FAccountInfo(user,name,strategy,symbol1,symbol2,current_price)
-        print(info)
+        # print(info)
         balance1 = info[0]
         balance2 = info[1]
         last_price = info[2]
@@ -272,10 +274,14 @@ def FOrders(bots_list, current_price): #open orders
           price_delta_percent = 100 - float(current_price) * 100 / float(last_price)
         if price_delta_percent >= percent_step_insurance_order:
           order_quantity = round(last_order_quantity + (last_order_quantity / 100 * martingale), 8)
-          order_amount = round(float(order_amount) * float(current_price), 8)
+          order_amount = round(float(order_quantity) * float(current_price), 8)
+          print ('Last order QUANTITY (X): %f'%last_order_quantity) #test
+          print ('BUY QUANTITY (X): %f'%order_quantity) #test
+          print ('BUY AMOUNT (Y): %f'%order_amount) #test
           if balance2 >= order_amount:
-            balance1 = float(balance1) + float(order_quantity)
-            balance2 = float(balance2) - float(order_amount)
+            balance1 = round(float(balance1) + float(order_quantity), 8)
+            balance2 = round(float(balance2) - float(order_amount), 8)
+            id =+ 1
             print ('Buy next')
             FSendOrder('Open',user,strategy,symbol1,symbol2,balance1,balance2,order_quantity,order_amount,current_price,id)
         elif price_delta_percent <= neg_takeprofit:
@@ -283,6 +289,25 @@ def FOrders(bots_list, current_price): #open orders
           sell_price = current_price
           sell_quantity = sumvol
           sell_amount = round(float(sell_quantity) * float(sell_price), 8)
+          balance1 = round(float(balance1) - float(sell_quantity), 8)
+          balance2 = round(float(balance2) + float(sell_amount), 8)
+          id =+ 1
+          try:
+            db = pymysql.connect(CONF_MYSQL_HOST, CONF_MYSQL_USER, CONF_MYSQL_PASS, CONF_MYSQL_DB)
+            cursor = db.cursor()
+            sql = 'UPDATE bots SET volumefirst = %s WHERE user = %s AND name = %s'
+            val_tuple = (0, user, name)
+            try:
+              cursor.execute(sql, val_tuple)
+              db.commit()
+            except (pymysql.Error, pymysql.Warning) as e:
+              db.rollback()
+              print ('Error: unable to update data in BOTS table')
+              print(e.args[0],e.args[1])
+          except (pymysql.Error, pymysql.Warning) as e:
+            print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
+            # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
+            #return e.args[0]
           FSendOrder('Close',user,strategy,symbol1,symbol2,balance1,balance2,sell_quantity,sell_amount,sell_price,id)
 
 ############################################TESTS######################################
@@ -318,11 +343,16 @@ def create_test_mysql_bots(num_rows, volume_value_first_order, percent_step_insu
 ####################TESTS END###########################
 
 if __name__ == '__main__':
-  prices = [3550.1, 3500.1, 3450.1, 3400.1, 3350.1, 3300.1, 3250.1, 3200.1] #test
-  price_gen = (x for x in range(len(prices))) #test
+  prices = [3550.1, 3500.1, 3450.1, 3400.1, 3350.1, 3300.1, 3250.1, 3200.1, 3450.1, 3500.1, 3550.1, 3650.1, 3750.1]
+  price_gen = (x for x in range(len(prices)))
   while True:
     bots = FBots('long')
-    index = next(price_gen) #test
+    index = next(price_gen)
     print ('Current price: %s'%prices[index])
     FOrders(bots, prices[index])
+    #data = mysql_db_get_data_from_bots('long')
+    #process_auto_trade(data[1])
+    #index = next(pg)
+    #print ('Index: %d'%index)
+    #update_price_current_bots(pl[index], 'X/Y')
     time.sleep(5)
