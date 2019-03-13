@@ -7,9 +7,10 @@ import pymysql
 import config
 import uuid
 import requests
-# import hmac
-# import hashlib
-# from urllib.parse import urlencode
+import hmac
+import hashlib
+from urllib.parse import urlencode
+# from binance import Binance
 
 CONF_MYSQL_HOST = config.MySqlConfig.host
 CONF_MYSQL_USER = config.MySqlConfig.mysql_user
@@ -59,6 +60,41 @@ def make_Binance_pair_currency_dict():
     pair_currency_dict.update({req['symbols'][i]['symbol'] : (req['symbols'][i]['baseAsset'], req['symbols'][i]['quoteAsset'])})
   return pair_currency_dict
 
+def get_Binance_account_info(api_key, api_secret, recvWindow=None):
+  req_url = BINANCE_PUBLIC_SERVER + BINANCE_METHODS['account']
+  timestamp = int(time.time() * 1000)
+  add_data = {'timestamp': timestamp}
+  if recvWindow:
+    add_data.update({'recvWindow' : recvWindow})
+  encoded_data = urlencode(add_data)
+  sign = hmac.new(api_secret.encode('utf-8'), encoded_data.encode('utf-8'), hashlib.sha256).hexdigest()
+  add_data.update({'signature' : sign})
+  hdrs = {'X-MBX-APIKEY': api_key}
+  success = False
+  try:
+    response = requests.get(req_url, add_data, headers=hdrs)
+    # print(add_data) #test
+    # print(response.url) #test
+    if response.status_code == requests.codes.ok:
+      resp_result = response.json()
+      success = True
+      return success, resp_result
+    else:
+      return success, response.status_code
+  except requests.exceptions.RequestException as e:
+    return success, e
+
+def get_Binance_currency_balance(api_key, api_secret, currency):
+  req = get_Binance_account_info(api_key, api_secret)
+  balance_free = 0.0
+  balance_locked = 0.0
+  if req[0]:
+    for i in range(len(req[1]['balances'])):
+      if req[1]['balances'][i]['asset'] == currency:
+        balance_free = req[1]['balances'][i]['free']
+        balance_locked = req[1]['balances'][i]['locked']
+    return balance_free, balance_locked
+
 ##############################################BINANCE END##########################################
 
 PAIR_CUR_DICT = make_Binance_pair_currency_dict() #Make a dict {'X/Y' : ['X', 'Y']}
@@ -78,6 +114,40 @@ def get_keys_from_accesses(access):
     except:
       print ('Error: unable to fetch data from %s table'%table_name)
     return keys
+  except (pymysql.Error, pymysql.Warning) as e:
+    print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
+    # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
+    #return e.args[0]
+
+def check_table_is_empty(table_name):
+  is_empty = True
+  try:
+    db = pymysql.connect(CONF_MYSQL_HOST, CONF_MYSQL_USER, CONF_MYSQL_PASS, CONF_MYSQL_DB)
+    cursor = db.cursor()
+    sql = 'SELECT * FROM {0}'.format(table_name)
+    cursor.execute(sql)
+    results = cursor.fetchone()
+    # print (results) #test
+    if results:
+      is_empty = False
+    cursor.close()
+    db.close()
+    return is_empty
+  except (pymysql.Error, pymysql.Warning) as e:
+    print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
+    # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
+    #return e.args[0]
+
+def get_last_contract_id():
+  try:
+    db = pymysql.connect(CONF_MYSQL_HOST, CONF_MYSQL_USER, CONF_MYSQL_PASS, CONF_MYSQL_DB)
+    cursor = db.cursor()
+    sql = 'SELECT contractid FROM events'
+    cursor.execute(sql)
+    results = cursor.fetchall()
+    cursor.close()
+    db.close()
+    return results[-1][0]
   except (pymysql.Error, pymysql.Warning) as e:
     print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
     # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
@@ -107,7 +177,7 @@ def FAccountInfo(user,account,strategy,symbol1,symbol2,currentprice):
         summa=s[5]
         balance=s[6]
         symbol=s[7]
-        print('Summa: %f'%summa)
+        # print('Summa: %f'%summa)
         if(symbol==symbol1): balance1=balance
         if(symbol==symbol2): balance2=balance
         if(comment==strategy):
@@ -234,12 +304,18 @@ def FOrders(bots_list, current_price): #open orders
       if volumefirst == 0:
         order_amount = volume_value_first_order
         order_quantity = round(float(order_amount) / float(current_price), 8)
-        balance1 = 0.1 #get_currency_Balance(symbol1)
-        balance2 = 100 #get_currency_Balance(symbol2)
+        #keys = get_keys_from_accesses(access)
+        balance1 = 0.1 #get_Binance_currency_balance(keys[0], keys[1], symbol1)
+        balance2 = 100 #get_Binance_currency_balance(keys[0], keys[1], symbol2)
         if balance2 >= order_amount:
           balance1 += order_quantity
           balance2 -= order_amount
           id = 0
+          table_empty_bool = check_table_is_empty('events')
+          if not table_empty_bool:
+            last_id = get_last_contract_id()
+            print('last ID: %d'%last_id)
+            id = last_id + 1
           print ('Buy first time')
           try:
             db = pymysql.connect(CONF_MYSQL_HOST, CONF_MYSQL_USER, CONF_MYSQL_PASS, CONF_MYSQL_DB)
@@ -266,7 +342,8 @@ def FOrders(bots_list, current_price): #open orders
         balance2 = info[1]
         last_price = info[2]
         last_order_quantity = info[3] 
-        id = info[4] 
+        id = info[4]
+        print('ID: %d'%id)
         profit = info[5] 
         sumvol = info[6]
         price_delta_percent = 0
@@ -281,7 +358,6 @@ def FOrders(bots_list, current_price): #open orders
           if balance2 >= order_amount:
             balance1 = round(float(balance1) + float(order_quantity), 8)
             balance2 = round(float(balance2) - float(order_amount), 8)
-            id =+ 1
             print ('Buy next')
             FSendOrder('Open',user,strategy,symbol1,symbol2,balance1,balance2,order_quantity,order_amount,current_price,id)
         elif price_delta_percent <= neg_takeprofit:
@@ -291,7 +367,6 @@ def FOrders(bots_list, current_price): #open orders
           sell_amount = round(float(sell_quantity) * float(sell_price), 8)
           balance1 = round(float(balance1) - float(sell_quantity), 8)
           balance2 = round(float(balance2) + float(sell_amount), 8)
-          id =+ 1
           try:
             db = pymysql.connect(CONF_MYSQL_HOST, CONF_MYSQL_USER, CONF_MYSQL_PASS, CONF_MYSQL_DB)
             cursor = db.cursor()
