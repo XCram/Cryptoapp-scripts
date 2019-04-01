@@ -3,9 +3,9 @@
 
 import datetime
 import time
+import json
 import pymysql
 import config
-import uuid
 import requests
 import hmac
 import hashlib
@@ -17,13 +17,15 @@ CONF_MYSQL_USER = config.MySqlConfig.mysql_user
 CONF_MYSQL_PASS = config.MySqlConfig.mysql_passwd
 CONF_MYSQL_DB = config.MySqlConfig.db
 
-BOTS_COLUMNS = ('user','name','access','strategy','enabled','volumefirst','volume_value_first_order','volume_percent_first_order','percent_step_insurance_order','cycle_limit','takeprofit','martingale','symbol')
+BOTS_COLUMNS_OLD = ('user','name','access','strategy','enabled','volumefirst','volume_value_first_order','volume_percent_first_order','percent_step_insurance_order','cycle_limit','takeprofit','martingale','symbol','max_count_next_order')
 EVENTS_COLUMNS = ('date', 'user', 'account', 'type', 'comment', 'price', 'summa', 'balance', 'symbol', 'contractid')
+BOTS_COLUMNS = ('user','name','access','enabled','strategybuy','strategysell','symbol', 'volumefirst') #, 'timeframe'
 
 ##############################################BINANCE START##########################################
 
 BINANCE_PUBLIC_SERVER = 'https://api.binance.com'
-BINANCE_METHODS = {'prices' : '/api/v3/ticker/price', 'history' : '/api/v1/klines', 'trades' : '/api/v1/historicalTrades', 'test_order' : '/api/v3/order/test', 'order' : '/api/v3/order', 'account' : '/api/v3/account', 'best_bids_asks_qty' : '/api/v3/ticker/bookTicker', 'exchange_info' : '/api/v1/exchangeInfo'}
+BINANCE_METHODS = {'prices' : '/api/v3/ticker/price', 'history' : '/api/v1/klines', 'trades' : '/api/v1/historicalTrades', 'test_order' : '/api/v3/order/test', 'order' : '/api/v3/order', 'account' : '/api/v3/account', 'best_bids_asks_qty' : '/api/v3/ticker/bookTicker', 'exchange_info' : '/api/v1/exchangeInfo', '24_hour_stats' : '/api/v1/ticker/24hr'}
+BINANCE_INTERVALS = ('1m', '3m', '5m', '15m', '30m', '1h')
 
 def Binance_public_GET_request(req_url, add_data=None):
   success = False
@@ -95,9 +97,145 @@ def get_Binance_currency_balance(api_key, api_secret, currency):
         balance_locked = req[1]['balances'][i]['locked']
     return balance_free, balance_locked
 
-##############################################BINANCE END##########################################
+def get_Binance_24hour_pair_stats(pair=None):
+  req_url = BINANCE_PUBLIC_SERVER + BINANCE_METHODS['24_hour_stats']
+  add_data = None
+  if pair:
+    add_data = {'symbol' : pair}
+  req_info = Binance_public_GET_request(req_url, add_data)
+  if req_info[0]: #success
+    return req_info[1]
 
-PAIR_CUR_DICT = make_Binance_pair_currency_dict() #Make a dict {'X/Y' : ['X', 'Y']}
+def get_Binance_24hour_pair_volume(pair):
+  stats = get_Binance_24hour_pair_stats(pair)
+  volume = None
+  if 'volume' in stats:
+    volume = stats['volume']
+  return volume
+
+#Output: list of data lists
+def get_Binance_OHLC(ticker, interval, start_time=None, end_time=None, limit=None):
+  req_url = BINANCE_PUBLIC_SERVER + BINANCE_METHODS['history']
+  add_data = {'symbol': ticker, 'interval': interval}
+  if start_time:
+    start_utime = int(datetime.datetime.strptime(start_time, '%Y-%m-%d').timestamp())
+    start_time_msec = start_utime * 1000
+    add_data.update({'startTime': start_time_msec})
+  if end_time:
+    end_utime = int(datetime.datetime.strptime(end_time, '%Y-%m-%d').timestamp())
+    end_time_msec = end_utime * 1000
+    add_data.update({'endTime': end_time_msec})
+  if limit:
+    add_data.update({'limit': limit})
+  req_info = Binance_public_GET_request(req_url, add_data)
+  if req_info[0]: #success
+    ohlc_lists = [x[1:5] for x in req_info[1]]
+    return ohlc_lists
+
+def get_Binance_last_24h_OHLC(ticker, interval):
+  req_url = BINANCE_PUBLIC_SERVER + BINANCE_METHODS['history']
+  timestamp = int(time.time() * 1000)
+  timestamp_24h_back = timestamp - 86400000
+  add_data = {'symbol': ticker, 'interval': interval, 'startTime': timestamp_24h_back, 'endTime': timestamp}
+  req_info = Binance_public_GET_request(req_url, add_data)
+  if req_info[0]: #success
+    ohlc_lists = [x[1:5] for x in req_info[1]]
+    return ohlc_lists
+
+PAIR_CUR_DICT = make_Binance_pair_currency_dict() #Make a dictionary {'X/Y' : ['X', 'Y']}
+
+##############################################BINANCE END###############################################
+
+##############################################INDICATORS START##########################################
+def calculate_EMA(num_periods, close_list):
+  #close_list =[22.27, 22.19, 22.08, 22.17, 22.18, 22.13, 22.23, 22.43, 22.24, 22.29, 22.15, 22.39, 22.38, 22.61, 23.36, 24.05, 23.75, 23.83, 23.95, 23.63, 23.82, 23.87, 23.65, 23.19, 23.10, 23.33, 22.68, 23.10, 22.40, 22.17]
+  prev_ema = sum(close_list[:num_periods]) / num_periods
+  end_slice = num_periods + 1
+  multiplier = 2 / end_slice
+  ema_list = [prev_ema]
+  for i in range(len(close_list[:-end_slice])):
+    new_val = ((close_list[i+end_slice] - ema_list[i]) * multiplier) + ema_list[i]
+    ema_list.append(new_val)
+  return ema_list
+
+def smooth_values_Wilder_method(cur_list):
+  cur_list_len = len(cur_list)
+  first_val = sum(cur_list)
+  new_list = [first_val]
+  for i in range(len(cur_list)):
+    next_val = new_list[i] - (new_list[i] / (cur_list_len + 1)) + cur_list[i]
+    new_list.append(next_val)
+  return new_list
+
+def calculate_DI_plus_DI_minus(h_list, l_list, c_list):
+  # highs_list =[46.68, 46.59, 46.88, 46.81, 46.74, 47.08, 46.84, 45.81, 45.13, 44.96, 45.01, 45.67, 45.71, 45.35]
+  # lows_list = [46.10, 46.14, 46.39, 46.41, 45.94, 46.68, 46.17, 45.10, 44.35, 44.61, 44.20, 44.93, 45.01, 44.46]
+  # close_list =[46.56, 46.36, 46.83, 46.72, 46.65, 46.97, 46.56, 45.29, 44.94, 44.62, 44.70, 45.27, 45.44, 44.76]
+  highs_list = h_list[-14:]
+  lows_list = l_list[-14:]
+  close_list = c_list[-14:]
+  cur_high_minus_prior_high = [x - y for x, y in zip(highs_list[1:], highs_list)]
+  prior_low_minus_cur_low = [x - y for x, y in zip(lows_list, lows_list[1:])]
+  dm_plus_list = [max(x, 0) if x > y else 0 for x, y in zip(cur_high_minus_prior_high, prior_low_minus_cur_low)]
+  dm_minus_list = [max(y, 0) if x < y else 0 for x, y in zip(cur_high_minus_prior_high, prior_low_minus_cur_low)]
+  highs_minus_lows_list = [x - y for x, y in zip(highs_list, lows_list)]
+  high_minus_pr_close_list = [abs(x - y) for x, y in zip(highs_list[1:], close_list)]
+  low_minus_pr_close_list = [abs(x - y) for x, y in zip(lows_list[1:], close_list)]
+  tr_list = [max(x, y, z) for x, y, z in zip(highs_minus_lows_list[1:], high_minus_pr_close_list, low_minus_pr_close_list)]
+  tr14_list = smooth_values_Wilder_method(tr_list)
+  dm14_pl_list = smooth_values_Wilder_method(dm_plus_list)
+  dm14_m_list = smooth_values_Wilder_method(dm_minus_list)
+  di_plus_list = [((x / y) * 100) for x, y in zip(dm14_pl_list, tr14_list)]
+  di_minus_list = [((x / y) * 100) for x, y in zip(dm14_m_list, tr14_list)]
+  return di_plus_list, di_minus_list
+
+##############################################INDICATORS END##########################################
+
+# Input: values_list
+# Output: trends_dict such as {x_value : trend} (trend means -1, 0 or 1 -- downtrend, flat or uptrend accordingly)
+def make_trends_dict(values_list):
+  trends_list = []
+  trends_dict = {}
+  for i in range(len(values_list[:-1])):
+    next_i = i + 1
+    if values_list[next_i] > values_list[i]:
+      trends_list.append(1)
+    elif values_list[next_i] < values_list[i]:
+      trends_list.append(-1)
+    else:
+      trends_list.append(0)
+  new_trends_list = [trends_list[0]]
+  new_trends_list.extend(trends_list)
+  for i in range(len(values_list)):
+    trends_dict.update({values_list[i] : new_trends_list[i]})
+  return trends_dict
+
+# Input: periods, indexes_list
+# Output: uptrend = True, downtrend = False ;; number of trend bars
+def determine_last_trend(periods, ema_list):
+  # fl = [50.65, 50.43, 49.63, 50.33, 50.29, 50.17, 49.32, 48.50, 48.32, 46.80, 47.80, 48.39, 48.66, 48.79]
+  # periods += 1
+  new_price_list = ema_list[-periods:]
+  counter_up = 1
+  counter_down = 1
+  counter = 0
+  trend_up = True
+  for i in range(len(new_price_list[:-1])):
+    next_i = i + 1
+    if new_price_list[next_i] > new_price_list[i]:
+      trend_up = True
+      counter_up += 1
+      counter_down = 1
+    elif new_price_list[next_i] < new_price_list[i]:
+      # print(new_price_list[next_i], new_price_list[i])
+      trend_up = False
+      counter_up = 1
+      counter_down += 1
+  if trend_up:
+    counter = counter_up
+  else:
+    counter = counter_down
+  return trend_up, counter
 
 def get_keys_from_accesses(access):
   table_name = 'accesses'
@@ -138,27 +276,69 @@ def check_table_is_empty(table_name):
     # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
     #return e.args[0]
 
-def get_last_contract_id():
+def get_last_contract_id(user, strategy):
   try:
     db = pymysql.connect(CONF_MYSQL_HOST, CONF_MYSQL_USER, CONF_MYSQL_PASS, CONF_MYSQL_DB)
     cursor = db.cursor()
-    sql = 'SELECT contractid FROM events'
-    cursor.execute(sql)
+    sql = 'SELECT contractid FROM events WHERE user = %s AND comment = %s'
+    val_tuple = (num_orders, user)
+    cursor.execute(sql, val_tuple)
     results = cursor.fetchall()
     cursor.close()
     db.close()
-    return results[-1][0]
+    last_id = 0
+    if results[-1][-1]:
+      last_id = results[-1][-1]
+    return last_id
   except (pymysql.Error, pymysql.Warning) as e:
     print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
     # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
     #return e.args[0]
 
-def FAccountInfo(user,account,strategy,symbol1,symbol2,currentprice):
+def update_strategy_params(column, strategy_params, user):
+  strategy_str = str(strategy_params)
+  strategy_json_str = strategy_str.replace("'", '"')
   try:
     db = pymysql.connect(CONF_MYSQL_HOST, CONF_MYSQL_USER, CONF_MYSQL_PASS, CONF_MYSQL_DB)
     cursor = db.cursor()
-    sql = 'SELECT user,account,type,comment,price,summa,balance,symbol,contractid FROM events WHERE user = %s AND account = %s'
-    q_tuple = (user, 'Demo')
+    sql = 'UPDATE bots SET {} = %s WHERE user = %s'.format(column)
+    val_tuple = (strategy_json_str, user)
+    try:
+      cursor.execute(sql, val_tuple)
+      db.commit()
+    except (pymysql.Error, pymysql.Warning) as e:
+      db.rollback()
+      print ('Error: unable to update data in BOTS table')
+      print(e.args[0],e.args[1])
+  except (pymysql.Error, pymysql.Warning) as e:
+    print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
+    # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
+    #return e.args[0]
+
+def update_bots_num_orders(user, value):
+  try:
+    db = pymysql.connect(CONF_MYSQL_HOST, CONF_MYSQL_USER, CONF_MYSQL_PASS, CONF_MYSQL_DB)
+    cursor = db.cursor()
+    sql = 'UPDATE bots SET volumefirst = %s WHERE user = %s'
+    val_tuple = (value, user)
+    try:
+      cursor.execute(sql, val_tuple)
+      db.commit()
+    except (pymysql.Error, pymysql.Warning) as e:
+      db.rollback()
+      print ('Error: unable to update data in BOTS table')
+      print(e.args[0],e.args[1])
+  except (pymysql.Error, pymysql.Warning) as e:
+    print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
+    # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
+    #return e.args[0]
+
+def FAccountInfo(user,symbol1,symbol2,currentprice):
+  try:
+    db = pymysql.connect(CONF_MYSQL_HOST, CONF_MYSQL_USER, CONF_MYSQL_PASS, CONF_MYSQL_DB)
+    cursor = db.cursor()
+    sql = 'SELECT user,account,type,comment,price,summa,balance,symbol,contractid FROM events WHERE user = %s'
+    q_tuple = (user,)
     try:
       cursor.execute(sql, q_tuple)
       results = cursor.fetchall()
@@ -167,12 +347,12 @@ def FAccountInfo(user,account,strategy,symbol1,symbol2,currentprice):
       lp=0
       lv=0
       profit=0
-      sumvol=0
-      id=0
+      sumvol = 0
+      id = 0
       # reversed_results = results[::-1]
       for s in results:
         type=s[2]
-        comment=s[3]
+        # comment=s[3]
         price=s[4]
         summa=s[5]
         balance=s[6]
@@ -180,20 +360,20 @@ def FAccountInfo(user,account,strategy,symbol1,symbol2,currentprice):
         # print('Summa: %f'%summa)
         if(symbol==symbol1): balance1=balance
         if(symbol==symbol2): balance2=balance
-        if(comment==strategy):
+        # if(comment==strategy):
           #print(" comment  ",comment," type ",type," s ",symbol ," s1 ",symbol1," strategy ",strategy)
-          if(type=='BUY' and symbol==symbol1):
-            lp=price
-            lv=summa
-            id=s[8]
-            profit+=(float(currentprice)-float(price))*float(summa)
-            sumvol+=summa
-          if(type=='SELL' and symbol==symbol1):
-            lp=0
-            lv=0
-            id=id+1
-            profit=0
-            sumvol=0
+        if(type == 'BUY' and symbol==symbol1):
+          lp = price
+          lv = summa
+          id = s[8]
+          profit+=(float(currentprice)-float(price))*float(summa)
+          sumvol+=summa
+        if(type == 'SELL' and symbol == symbol1):
+          lp = 0
+          lv = 0
+          id += 1
+          profit = 0
+          sumvol = 0
       res=[balance1,balance2,lp,lv,id,profit,sumvol]
       return res
     except:
@@ -225,6 +405,7 @@ def FSendOrder(operation,user,strategy,symbol1,symbol2,balance1,balance2,quantit
       balance_second = balance2
       quantity_first = quantity1
       quantity_second = quantity2
+    # print ('Balance_1: %f; Balance_2: %f'%(balance_first, balance_second)) #Test
     #TRANSACTIONS HISTORY BEGIN
     sql = 'INSERT INTO {0} ({1}) VALUES ({2})'.format(table_name, ', '.join('{}'.format(EVENTS_COLUMNS[i]) for i in range(len(EVENTS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(EVENTS_COLUMNS))))
     val_tuple = (cur_date_string, user, account, 'BUY', strategy, price, quantity_first, balance_first, pair_cur_first, contractid)
@@ -254,13 +435,13 @@ def FSendOrder(operation,user,strategy,symbol1,symbol2,balance1,balance2,quantit
     # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
     #return e.args[0]
 
-def FBots(strategy):
+def FBots():
   table_name = 'bots'
   try:
     db = pymysql.connect(CONF_MYSQL_HOST, CONF_MYSQL_USER, CONF_MYSQL_PASS, CONF_MYSQL_DB)
     cursor = db.cursor()
-    sql = 'SELECT {0} FROM {1} WHERE enabled = %s AND strategy = %s'.format(', '.join('{}'.format(BOTS_COLUMNS[i]) for i in range(len(BOTS_COLUMNS))), table_name)
-    q_tuple = (1, strategy)
+    sql = 'SELECT {0} FROM {1} WHERE enabled = %s'.format(', '.join('{}'.format(BOTS_COLUMNS[i]) for i in range(len(BOTS_COLUMNS))), table_name)
+    q_tuple = (1,)
     try:
       cursor.execute(sql, q_tuple)
       results = cursor.fetchall()
@@ -276,158 +457,282 @@ def FBots(strategy):
     #return e.args[0]
 
 
-def FOrders(bots_list, current_price): #open orders
+def process_PLUS_strategy(bots_list, prices_dict, strategy_params): #open orders
   if bots_list:
-    # prices_list = get_Binance_prices()
-    # prices_dict = {}
-    # for i in range(len(prices_list)):
-    # prices_dict.update({prices_list[i]['symbol'] : prices_list[i]['price']})
-    for i in range(len(bots_list)):
-      user = bots_list[i][0]
-      name = bots_list[i][1]
-      access = bots_list[i][2]
-      strategy = bots_list[i][3]
-      enabled = bots_list[i][4]
-      volumefirst = bots_list[i][5]
-      volume_value_first_order = bots_list[i][6]
-      volume_percent_first_order = bots_list[i][7]
-      percent_step_insurance_order = bots_list[i][8]
-      cycle_limit = bots_list[i][9]
-      takeprofit = bots_list[i][10]
-      martingale = bots_list[i][11]
-      symbol = bots_list[i][12]
+    user = bots_list[0]
+    name = bots_list[1]
+    access = bots_list[2]
+    symbol = bots_list[6]
+    volumefirst = bots_list[7]
 
-      symbol1 = PAIR_CUR_DICT[symbol][0]
-      symbol2 = PAIR_CUR_DICT[symbol][1]
-      # current_price = prices_dict[symbol]
-      #print("= current_price ",current_price," lp ",last_price," last_order_amount ",last_order_amount)
-      if volumefirst == 0:
+    #current_price = prices_dict[symbol]
+    current_price = prices_dict
+
+    volume_value_first_order = strategy_params['PLUS'][3]
+    percent_step_insurance_order = strategy_params['PLUS'][4]
+    martingale = strategy_params['PLUS'][5]
+    max_num_orders = strategy_params['PLUS'][6]
+    num_simultaneuos_orders = strategy_params['PLUS'][7]
+    # volumefirst = strategy_params['PLUS'][8]
+
+    symbol1 = PAIR_CUR_DICT[symbol][0]
+    symbol2 = PAIR_CUR_DICT[symbol][1]
+
+    info = FAccountInfo(user,symbol1,symbol2,current_price)
+    # print(info)
+    balance1 = info[0]
+    balance2 = info[1]
+    last_price = info[2]
+    last_order_quantity = info[3]
+    id = info[4]
+    # print('ID: %s'%id)
+    # profit = info[5]
+    # sumvol = info[6]
+
+    # current_price = prices_dict[symbol]
+    #print("= current_price ",current_price," lp ",last_price," last_order_amount ",last_order_amount)
+    if volumefirst == 0:
+      #keys = get_keys_from_accesses(access)
+      balance1 = 0.1 #get_Binance_currency_balance(keys[0], keys[1], symbol1)
+      balance2 = 100 #get_Binance_currency_balance(keys[0], keys[1], symbol2)
+      next_price = current_price
+      # last_id = get_last_contract_id(user, 'PLUS')
+      num_orders = 0
+      for i in range(num_simultaneuos_orders):
         order_amount = volume_value_first_order
-        order_quantity = round(float(order_amount) / float(current_price), 8)
-        #keys = get_keys_from_accesses(access)
-        balance1 = 0.1 #get_Binance_currency_balance(keys[0], keys[1], symbol1)
-        balance2 = 100 #get_Binance_currency_balance(keys[0], keys[1], symbol2)
+        order_quantity = round(float(order_amount) / float(next_price), 8)
         if balance2 >= order_amount:
-          balance1 += order_quantity
-          balance2 -= order_amount
-          id = 0
-          table_empty_bool = check_table_is_empty('events')
-          if not table_empty_bool:
-            last_id = get_last_contract_id()
-            print('last ID: %d'%last_id)
-            id = last_id + 1
-          print ('Buy first time')
-          try:
-            db = pymysql.connect(CONF_MYSQL_HOST, CONF_MYSQL_USER, CONF_MYSQL_PASS, CONF_MYSQL_DB)
-            cursor = db.cursor()
-            sql = 'UPDATE bots SET volumefirst = %s WHERE user = %s AND name = %s'
-            val_tuple = (1, user, name)
-            try:
-              cursor.execute(sql, val_tuple)
-              db.commit()
-            except (pymysql.Error, pymysql.Warning) as e:
-              db.rollback()
-              print ('Error: unable to update data in BOTS table')
-              print(e.args[0],e.args[1])
-          except (pymysql.Error, pymysql.Warning) as e:
-            print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
-            # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
-            #return e.args[0]
-          FSendOrder('Open',user,strategy,symbol1,symbol2,balance1,balance2,order_quantity,order_amount,current_price,id)
-      else:
-        neg_takeprofit = takeprofit * -1
-        info = FAccountInfo(user,name,strategy,symbol1,symbol2,current_price)
-        # print(info)
-        balance1 = info[0]
-        balance2 = info[1]
-        last_price = info[2]
-        last_order_quantity = info[3] 
-        id = info[4]
-        print('ID: %d'%id)
-        profit = info[5] 
-        sumvol = info[6]
-        price_delta_percent = 0
-        if last_price > 0:
-          price_delta_percent = 100 - float(current_price) * 100 / float(last_price)
-        if price_delta_percent >= percent_step_insurance_order:
+          balance1 = round(balance1 + order_quantity, 8)
+          balance2 = round(balance2 - order_amount, 8)
+          print ('Buy first time. PLUS. Bal_1: %f; Bal_2: %f; Amount: %f; Quantity: %f'%(balance1, balance2, order_amount, order_quantity))
+          num_orders += 1
+          FSendOrder('Open',user,'PLUS',symbol1,symbol2,balance1,balance2,order_quantity,order_amount,next_price, id)
+          next_price = round(next_price - (next_price / 100 * percent_step_insurance_order), 8)
+      # strategy_params['PLUS'][8] = num_orders
+      # update_strategy_params('strategybuy', strategy_params, user)
+      update_bots_num_orders(user, num_orders)
+    else:
+      # neg_takeprofit = takeprofit * -1
+      price_delta_percent = 0
+      next_price = current_price
+      if last_price > 0:
+        price_delta_percent = 100 - float(current_price) * 100 / float(last_price)
+      if price_delta_percent >= percent_step_insurance_order and volumefirst < max_num_orders:
+        num_orders = 0
+        for i in range(num_simultaneuos_orders):
           order_quantity = round(last_order_quantity + (last_order_quantity / 100 * martingale), 8)
           order_amount = round(float(order_quantity) * float(current_price), 8)
-          print ('Last order QUANTITY (X): %f'%last_order_quantity) #test
-          print ('BUY QUANTITY (X): %f'%order_quantity) #test
-          print ('BUY AMOUNT (Y): %f'%order_amount) #test
           if balance2 >= order_amount:
             balance1 = round(float(balance1) + float(order_quantity), 8)
             balance2 = round(float(balance2) - float(order_amount), 8)
-            print ('Buy next')
-            FSendOrder('Open',user,strategy,symbol1,symbol2,balance1,balance2,order_quantity,order_amount,current_price,id)
-        elif price_delta_percent <= neg_takeprofit:
-          print ('Sell')
-          sell_price = current_price
-          sell_quantity = sumvol
-          sell_amount = round(float(sell_quantity) * float(sell_price), 8)
-          balance1 = round(float(balance1) - float(sell_quantity), 8)
-          balance2 = round(float(balance2) + float(sell_amount), 8)
-          try:
-            db = pymysql.connect(CONF_MYSQL_HOST, CONF_MYSQL_USER, CONF_MYSQL_PASS, CONF_MYSQL_DB)
-            cursor = db.cursor()
-            sql = 'UPDATE bots SET volumefirst = %s WHERE user = %s AND name = %s'
-            val_tuple = (0, user, name)
-            try:
-              cursor.execute(sql, val_tuple)
-              db.commit()
-            except (pymysql.Error, pymysql.Warning) as e:
-              db.rollback()
-              print ('Error: unable to update data in BOTS table')
-              print(e.args[0],e.args[1])
-          except (pymysql.Error, pymysql.Warning) as e:
-            print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
-            # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
-            #return e.args[0]
-          FSendOrder('Close',user,strategy,symbol1,symbol2,balance1,balance2,sell_quantity,sell_amount,sell_price,id)
+            print ('Buy next. Bal_1: %f; Bal_2: %f; Amount: %f; Quantity: %f'%(balance1, balance2, order_amount, order_quantity))
+            num_orders += 1
+            FSendOrder('Open',user,'PLUS',symbol1,symbol2,balance1,balance2,order_quantity,order_amount,next_price,id)
+            next_price = round(next_price - (next_price / 100 * percent_step_insurance_order), 8)
+        num_orders += volumefirst
+        update_bots_num_orders(user, num_orders)
+        # update_strategy_params('strategybuy', strategy_params, user)
+      # elif price_delta_percent <= neg_takeprofit:
+      # print ('Sell')
+      # sell_price = current_price
+      # sell_quantity = sumvol
+      # sell_amount = round(float(sell_quantity) * float(sell_price), 8)
+      # balance1 = round(float(balance1) - float(sell_quantity), 8)
+      # balance2 = round(float(balance2) + float(sell_amount), 8)
+      # update_bots_num_orders(0, user)
+      # FSendOrder('Close',user,strategy,symbol1,symbol2,balance1,balance2,sell_quantity,sell_amount,sell_price,id)
 
-############################################TESTS######################################
-def create_test_mysql_bots(num_rows, volume_value_first_order, percent_step_insurance_order, takeprofit):
-  table_name = 'bots'
-  try:
-    db = pymysql.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
-    cursor = db.cursor()
-    sql = 'INSERT INTO bots ({0}) VALUES ({1})'.format(', '.join('{}'.format(BOTS_COLUMNS[i]) for i in range(len(BOTS_COLUMNS))), ', '.join('{}'.format('%s') for i in range(len(BOTS_COLUMNS))))
-    for i in range(num_rows):
-      new_user = uuid.uuid4().hex.upper()[0:8]
-      name = uuid.uuid4().hex.upper()[0:9]
-      access = uuid.uuid4().hex.upper()[0:10]
-      cur_utime = int(time.time())
-      #'user','name','access','strategy','enabled','volumefirst','volume_value_first_order','volume_percent_first_order','percent_step_insurance_order','cycle_limit','takeprofit','martingale','symbol'
-      # date = datetime.datetime.utcfromtimestamp(cur_utime).strftime('%Y-%m-%d %H:%M:%S')
-      val_tuple = (new_user, name, access, 'long', 1, 0, volume_value_first_order, 5.5, percent_step_insurance_order, 10, takeprofit, 10.5, 'BTCUSDT')
-      try:
-        cursor.execute(sql, val_tuple)
-        db.commit()
-      except (pymysql.Error, pymysql.Warning) as e:
-        db.rollback()
-        print ('Error: unable to insert data into %s table'%table_name)
-        print(e.args[0],e.args[1])
-        # logging.info('Error: unable to insert data into %s table'%table_name)
-    print ('Closing db')
-    cursor.close()
-    db.close()
-  except (pymysql.Error, pymysql.Warning) as e:
-    print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
-    # logging.info('Connect to table 'bots' of MSQL database error: %d (%s)'%(e.args[0],e.args[1])
+def process_ZIGZAG_strategy(bots_list, buy_or_sell, prices_dict, strategy_params):
+  if bots_list:
+    user = bots_list[0]
+    name = bots_list[1]
+    access = bots_list[2]
+    symbol = bots_list[6]
+    volumefirst = bots_list[7]
 
-####################TESTS END###########################
+    interval = strategy_params['ZIGZAG'][0]
+    trend_len_for_sell = strategy_params['ZIGZAG'][1]
+    trend_len_for_buy = strategy_params['ZIGZAG'][2]
+    volume_value_first_order = strategy_params['ZIGZAG'][3]
+
+    #current_price = prices_dict[symbol]
+    current_price = prices_dict
+    # ohlc_lists = get_Binance_last_24h_OHLC(symbol, interval)
+    # close_list = [x[3] for x in ohlc_lists]
+
+    #test
+    close_list = [3550.1, 3500.1, 3450.1, 3400.1, 3350.1, 3300.1, 3250.1, 3200.1, 3450.1, 3500.1, 3550.1, 3650.1, 3750.1]
+
+    ema_list = calculate_EMA(8, close_list[-9:])
+    last_trend_data = determine_last_trend(len(ema_list), ema_list)
+    uptrend = last_trend_data[0] #True if uptrend
+    last_trend_len = last_trend_data[1]
+    last_trend_list = ema_list[-last_trend_len:]
+    # last_price = price_list[-1]
+
+    symbol1 = PAIR_CUR_DICT[symbol][0]
+    symbol2 = PAIR_CUR_DICT[symbol][1]
+
+    info = FAccountInfo(user,symbol1,symbol2,current_price)
+    # print(info)
+    balance1 = info[0]
+    balance2 = info[1]
+    # last_price = info[2]
+    # last_order_quantity = info[3]
+    id = info[4]
+    # print('ID: %s'%id)
+    # profit = info[5]
+    sumvol = info[6]
+
+    if uptrend and last_trend_len > trend_len_for_sell and buy_or_sell == 'SELL':
+      print ('ZIGZAG sell')
+      order_quantity = round(float(sumvol), 8)
+      order_amount = round(order_quantity * current_price, 8)
+      FSendOrder('Close',user,'ZIGZAG',symbol1,symbol2,balance1,balance2,order_quantity,order_amount,current_price,id)
+      update_bots_num_orders(user, 1)
+    elif last_trend_len > trend_len_for_buy and buy_or_sell == 'BUY':
+      print ('ZIGZAG buy')
+      if volumefirst == 0:
+        #keys = get_keys_from_accesses(access)
+        balance1 = 0.1 #get_Binance_currency_balance(keys[0], keys[1], symbol1)
+        balance2 = 100 #get_Binance_currency_balance(keys[0], keys[1], symbol2)
+        # last_id = get_last_contract_id(user, 'ZIGZAG')
+        order_amount = volume_value_first_order
+        order_quantity = round(float(order_amount) / float(current_price), 8)
+        if balance2 >= order_amount:
+          balance1 = round(balance1 + order_quantity, 8)
+          balance2 = round(balance2 - order_amount, 8)
+          print ('Buy first time. ZIGZAG. Bal_1: %f; Bal_2: %f; Amount: %f; Quantity: %f'%(balance1, balance2, order_amount, order_quantity))
+          FSendOrder('Open',user,'ZIGZAG',symbol1,symbol2,balance1,balance2,order_quantity,order_amount,current_price, id)
+          update_bots_num_orders(user, 1)
+      else:
+        order_amount = volume_value_first_order
+        order_quantity = round(float(order_amount) / float(current_price), 8)
+        if balance2 >= order_amount:
+          balance1 = round(balance1 + order_quantity, 8)
+          balance2 = round(balance2 - order_amount, 8)
+          print ('Buy first time. ZIGZAG. Bal_1: %f; Bal_2: %f; Amount: %f; Quantity: %f'%(balance1, balance2, order_amount, order_quantity))
+          FSendOrder('Open',user,'ZIGZAG',symbol1,symbol2,balance1,balance2,order_quantity,order_amount,current_price,id)
+          num_orders += volumefirst
+          update_bots_num_orders(user, num_orders)
+
+def process_SPIRAL_strategy(bots_list, buy_or_sell, prices_dict, strategy_params):
+  if bots_list:
+    user = bots_list[0]
+    name = bots_list[1]
+    access = bots_list[2]
+    symbol = bots_list[6]
+    volumefirst = bots_list[7]
+
+    # prices_list = get_Binance_prices()
+    # for i in range(len(prices_list)):
+    # if prices_list[i]['symbol'] == symbol:
+    # current_price = prices_list[i]['price']
+    # break
+    # last_price = price_list[-1]
+    interval = strategy_params['SPIRAL'][0]
+    volume_value_first_order = strategy_params['SPIRAL'][1]
+
+    #current_price = prices_dict[symbol]
+    current_price = prices_dict
+
+    # ohlc_lists = get_Binance_last_24h_OHLC(symbol, interval)
+    # h_list = [x[1] for x in ohlc_lists]
+    # l_list = [x[2] for x in ohlc_lists]
+    # c_list = [x[3] for x in ohlc_lists]
+
+    #test
+    c_list = [3550.1, 3500.1, 3450.1, 3400.1, 3350.1, 3300.1, 3250.1, 3200.1, 3450.1, 3500.1, 3550.1, 3650.1, 3750.1]
+    h_list = [x+55 for x in c_list]
+    l_list = [x-30 for x in c_list]
+
+    di_list = calculate_DI_plus_DI_minus(h_list, l_list, c_list)
+    di_plus_list = di_list[0]
+    di_minus_list = di_list[1]
+
+    symbol1 = PAIR_CUR_DICT[symbol][0]
+    symbol2 = PAIR_CUR_DICT[symbol][1]
+
+    info = FAccountInfo(user,symbol1,symbol2,current_price)
+    # print(info)
+    balance1 = info[0]
+    balance2 = info[1]
+    # last_price = info[2]
+    # last_order_quantity = info[3]
+    id = info[4]
+    # print('ID: %s'%id)
+    # profit = info[5]
+    sumvol = info[6]
+
+    if di_plus_list[-1] > 60 and buy_or_sell == 'SELL':
+      print ('SPIRAL sell')
+      # strategy_params['SPIRAL'][0] = 0
+      # update_strategy_params('strategysell', strategy_json_str, user)
+      order_quantity = round(float(sumvol), 8)
+      order_amount = round(order_quantity * current_price, 8)
+      FSendOrder('Close',user,'SPIRAL',symbol1,symbol2,balance1,balance2,order_quantity,order_amount,current_price,id)
+    elif di_minus_list[-1] > 60 and buy_or_sell == 'BUY':
+      print ('SPIRAL buy')
+      if volumefirst == 0:
+        #keys = get_keys_from_accesses(access)
+        balance1 = 0.1 #get_Binance_currency_balance(keys[0], keys[1], symbol1)
+        balance2 = 100 #get_Binance_currency_balance(keys[0], keys[1], symbol2)
+        # last_id = get_last_contract_id(user, 'SPIRAL')
+        order_amount = volume_value_first_order
+        order_quantity = round(float(order_amount) / float(current_price), 8)
+        if balance2 >= order_amount:
+          balance1 = round(balance1 + order_quantity, 8)
+          balance2 = round(balance2 - order_amount, 8)
+          print ('Buy first time. SPIRAL. Bal_1: %f; Bal_2: %f; Amount: %f; Quantity: %f'%(balance1, balance2, order_amount, order_quantity))
+          FSendOrder('Open',user,'SPIRAL',symbol1,symbol2,balance1,balance2,order_quantity,order_amount,current_price,id)
+          update_bots_num_orders(user, 1)
+      else:
+        order_amount = volume_value_first_order
+        order_quantity = round(float(order_amount) / float(current_price), 8)
+        if balance2 >= order_amount:
+          balance1 = round(balance1 + order_quantity, 8)
+          balance2 = round(balance2 - order_amount, 8)
+          print ('Buy first time. SPIRAL. Bal_1: %f; Bal_2: %f; Amount: %f; Quantity: %f'%(balance1, balance2, order_amount, order_quantity))
+          FSendOrder('Open',user,'SPIRAL',symbol1,symbol2,balance1,balance2,order_quantity,order_amount,current_price,id)
+          num_orders += volumefirst
+          update_bots_num_orders(user, num_orders)
+
+def process_WAVE_strategy(buy_or_sell, price_list):
+  pass
 
 if __name__ == '__main__':
+  #strategies_dict = {"SPIRAL" : [3,0.15], "WAVE" : [10,5,6], "ZIGZAG" : [3, 5, 8, 0.15], "PLUS" : [1.0, 0.30, 0.20, 0.15, 1.00, 5, 7, 2]}
+  #strategies_dict = {"SPIRAL" : [3,0.15], "WAVE" : [10,5,6], "ZIGZAG" : [3, 5, 8, 0.15]}
+  #PLUS (Д 1,00;мД 0,30;Д Tri 0,20;СО 0,0015;шСО 1,00;уСО 5;кСО 7;каСО 2)
+  #PLUS (profit 1,00;мД 0,30;Д Tri 0,20;volume_value_first_order 0,0015;percent_step_insurance_order 1,00;martingale 5;max_num_orders 7;num_simultaneuos_orders 2; volumefirst 0)
   prices = [3550.1, 3500.1, 3450.1, 3400.1, 3350.1, 3300.1, 3250.1, 3200.1, 3450.1, 3500.1, 3550.1, 3650.1, 3750.1]
   price_gen = (x for x in range(len(prices)))
   while True:
-    bots = FBots('long')
-    index = next(price_gen)
-    print ('Current price: %s'%prices[index])
-    FOrders(bots, prices[index])
-    #data = mysql_db_get_data_from_bots('long')
-    #process_auto_trade(data[1])
-    #index = next(pg)
-    #print ('Index: %d'%index)
-    #update_price_current_bots(pl[index], 'X/Y')
+    bots_list = FBots()
+    # print(bots_list)
+    if bots_list:
+      # prices_list = get_Binance_prices()
+      # prices_dict = {}
+      # for i in range(len(prices_list)):
+      # prices_dict.update({prices_list[i]['symbol'] : prices_list[i]['price']})
+      for i in range(len(bots_list)):
+        strategybuy_dict = json.loads(bots_list[i][4])
+        # print(bots_list[i][4])
+        strategysell_dict = json.loads(bots_list[i][5])
+        index = next(price_gen)
+        print ('Current price: %s'%prices[index])
+        if 'SPIRAL' in strategybuy_dict:
+          process_SPIRAL_strategy(bots_list[i], 'BUY', prices[index], strategybuy_dict)
+        if 'WAVE' in strategybuy_dict:
+          pass
+        if 'ZIGZAG' in strategybuy_dict:
+          process_ZIGZAG_strategy(bots_list[i], 'BUY', prices[index], strategybuy_dict)
+        if 'PLUS' in strategybuy_dict:
+          process_PLUS_strategy(bots_list[i], prices[index], strategybuy_dict)
+        if 'SPIRAL' in strategysell_dict:
+          process_SPIRAL_strategy(bots_list[i], 'SELL', prices[index], strategysell_dict)
+        if 'WAVE' in strategysell_dict:
+          pass
+        if 'ZIGZAG' in strategysell_dict:
+          process_ZIGZAG_strategy(bots_list[i], 'SELL', prices[index], strategysell_dict)
     time.sleep(5)
