@@ -10,16 +10,14 @@ import requests
 import hmac
 import hashlib
 from urllib.parse import urlencode
-# from binance import Binance
 
 CONF_MYSQL_HOST = config.MySqlConfig.host
 CONF_MYSQL_USER = config.MySqlConfig.mysql_user
 CONF_MYSQL_PASS = config.MySqlConfig.mysql_passwd
 CONF_MYSQL_DB = config.MySqlConfig.db
 
-BOTS_COLUMNS_OLD = ('user','name','access','strategy','enabled','volumefirst','volume_value_first_order','volume_percent_first_order','percent_step_insurance_order','cycle_limit','takeprofit','martingale','symbol','max_count_next_order')
 EVENTS_COLUMNS = ('date', 'user', 'account', 'type', 'comment', 'price', 'summa', 'balance', 'symbol', 'contractid')
-BOTS_COLUMNS = ('user','name','access','enabled','strategybuy','strategysell','symbol', 'volumefirst') #, 'timeframe'
+BOTS_COLUMNS = ('name', 'symbol', 'user','access', 'deal', 'status', 'timeframe', 'strategybuy','strategysell', 'enabled', 'order_num_current', 'max_num_orders', 'volume_value_first_order')
 
 ##############################################BINANCE START##########################################
 
@@ -237,6 +235,24 @@ def determine_last_trend(periods, ema_list):
     counter = counter_down
   return trend_up, counter
 
+def get_params_from_config(user, id):
+  table_name = 'config'
+  try:
+    db = pymysql.connect(CONF_MYSQL_HOST,CONF_MYSQL_USER,CONF_MYSQL_PASS,CONF_MYSQL_DB)
+    cursor = db.cursor()
+    sql = 'SELECT value FROM config WHERE id = %s AND user = %s'
+    q_tuple = (id, user)
+    try:
+      cursor.execute(sql, q_tuple)
+      res = cursor.fetchone()
+    except:
+      print ('Error: unable to fetch data from %s table'%table_name)
+    return res[0]
+  except (pymysql.Error, pymysql.Warning) as e:
+    print ('Connect to MSQL database error %d %s'%(e.args[0],e.args[1]))
+    # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
+    #return e.args[0]
+
 def get_keys_from_accesses(access):
   table_name = 'accesses'
   keys = []
@@ -319,7 +335,7 @@ def update_bots_num_orders(user, value):
   try:
     db = pymysql.connect(CONF_MYSQL_HOST, CONF_MYSQL_USER, CONF_MYSQL_PASS, CONF_MYSQL_DB)
     cursor = db.cursor()
-    sql = 'UPDATE bots SET volumefirst = %s WHERE user = %s'
+    sql = 'UPDATE bots SET order_num_current = %s WHERE user = %s'
     val_tuple = (value, user)
     try:
       cursor.execute(sql, val_tuple)
@@ -456,254 +472,257 @@ def FBots():
     # logging.info('Connect to MSQL database error: %d (%s)'%(e.args[0],e.args[1])
     #return e.args[0]
 
+def process_BUY_strategy(bots_list, prices_dict, strategy_params):
+  #'name', 'symbol', 'user','access', 'deal', 'status', 'timeframe', 'strategybuy','strategysell', 'enabled'
+  name = bots_list[0]
+  symbol = bots_list[1]
+  user = bots_list[2]
+  access = bots_list[3]
+  deal = bots_list[4]
+  status = bots_list[5]
+  timeframe = bots_list[6]
+  strategybuy = bots_list[7]
+  order_num_current = bots_list[10]
+  max_num_orders = bots_list[11]
+  volume_value_first_order = bots_list[12]
+  # strategysell = bots_list[8]
 
-def process_PLUS_strategy(bots_list, prices_dict, strategy_params): #open orders
-  if bots_list:
-    user = bots_list[0]
-    name = bots_list[1]
-    access = bots_list[2]
-    symbol = bots_list[6]
-    volumefirst = bots_list[7]
+  #current_price = prices_dict[symbol]
+  current_price = prices_dict
+  next_price = current_price
+  
+  num_simultaneuos_orders = 1
+  
+  strategy_names = []
+  
+  #PLUS
+  plus_condition = True
+  percent_step_insurance_order = 0
+  martingale = 0
+  
+  #ZIGZAG
+  zigzag_condition = True
+  
+  #SPIRAL
+  spiral_condition = True
+  
+  symbol1 = PAIR_CUR_DICT[symbol][0]
+  symbol2 = PAIR_CUR_DICT[symbol][1]
+  
+  info = FAccountInfo(user,symbol1,symbol2,current_price)
+  # print(info)
+  balance1 = info[0]
+  balance2 = info[1]
+  last_price = info[2]
+  last_order_quantity = info[3]
+  id = info[4]
 
-    #current_price = prices_dict[symbol]
-    current_price = prices_dict
-
-    volume_value_first_order = strategy_params['PLUS'][3]
+  if 'PLUS' in strategy_params:
+    strategy_names.append('PLUS')
+    takeprofit = strategy_params['PLUS'][0]
+    stoploss = strategy_params['PLUS'][1]
+    trailing_sell = strategy_params['PLUS'][2]
+    trailing_buy = strategy_params['PLUS'][3]
     percent_step_insurance_order = strategy_params['PLUS'][4]
     martingale = strategy_params['PLUS'][5]
-    max_num_orders = strategy_params['PLUS'][6]
-    num_simultaneuos_orders = strategy_params['PLUS'][7]
-    # volumefirst = strategy_params['PLUS'][8]
-
-    symbol1 = PAIR_CUR_DICT[symbol][0]
-    symbol2 = PAIR_CUR_DICT[symbol][1]
-
-    info = FAccountInfo(user,symbol1,symbol2,current_price)
-    # print(info)
-    balance1 = info[0]
-    balance2 = info[1]
-    last_price = info[2]
-    last_order_quantity = info[3]
-    id = info[4]
-    # print('ID: %s'%id)
-    # profit = info[5]
-    # sumvol = info[6]
-
-    # current_price = prices_dict[symbol]
-    #print("= current_price ",current_price," lp ",last_price," last_order_amount ",last_order_amount)
-    if volumefirst == 0:
-      #keys = get_keys_from_accesses(access)
-      balance1 = 0.1 #get_Binance_currency_balance(keys[0], keys[1], symbol1)
-      balance2 = 100 #get_Binance_currency_balance(keys[0], keys[1], symbol2)
-      next_price = current_price
-      # last_id = get_last_contract_id(user, 'PLUS')
-      num_orders = 0
-      for i in range(num_simultaneuos_orders):
-        order_amount = volume_value_first_order
-        order_quantity = round(float(order_amount) / float(next_price), 8)
-        if balance2 >= order_amount:
-          balance1 = round(balance1 + order_quantity, 8)
-          balance2 = round(balance2 - order_amount, 8)
-          print ('Buy first time. PLUS. Bal_1: %f; Bal_2: %f; Amount: %f; Quantity: %f'%(balance1, balance2, order_amount, order_quantity))
-          num_orders += 1
-          FSendOrder('Open',user,'PLUS',symbol1,symbol2,balance1,balance2,order_quantity,order_amount,next_price, id)
-          next_price = round(next_price - (next_price / 100 * percent_step_insurance_order), 8)
-      # strategy_params['PLUS'][8] = num_orders
-      # update_strategy_params('strategybuy', strategy_params, user)
-      update_bots_num_orders(user, num_orders)
-    else:
-      # neg_takeprofit = takeprofit * -1
-      price_delta_percent = 0
-      next_price = current_price
-      if last_price > 0:
-        price_delta_percent = 100 - float(current_price) * 100 / float(last_price)
-      if price_delta_percent >= percent_step_insurance_order and volumefirst < max_num_orders:
-        num_orders = 0
-        for i in range(num_simultaneuos_orders):
-          order_quantity = round(last_order_quantity + (last_order_quantity / 100 * martingale), 8)
-          order_amount = round(float(order_quantity) * float(current_price), 8)
-          if balance2 >= order_amount:
-            balance1 = round(float(balance1) + float(order_quantity), 8)
-            balance2 = round(float(balance2) - float(order_amount), 8)
-            print ('Buy next. Bal_1: %f; Bal_2: %f; Amount: %f; Quantity: %f'%(balance1, balance2, order_amount, order_quantity))
-            num_orders += 1
-            FSendOrder('Open',user,'PLUS',symbol1,symbol2,balance1,balance2,order_quantity,order_amount,next_price,id)
-            next_price = round(next_price - (next_price / 100 * percent_step_insurance_order), 8)
-        num_orders += volumefirst
-        update_bots_num_orders(user, num_orders)
-        # update_strategy_params('strategybuy', strategy_params, user)
-      # elif price_delta_percent <= neg_takeprofit:
-      # print ('Sell')
-      # sell_price = current_price
-      # sell_quantity = sumvol
-      # sell_amount = round(float(sell_quantity) * float(sell_price), 8)
-      # balance1 = round(float(balance1) - float(sell_quantity), 8)
-      # balance2 = round(float(balance2) + float(sell_amount), 8)
-      # update_bots_num_orders(0, user)
-      # FSendOrder('Close',user,strategy,symbol1,symbol2,balance1,balance2,sell_quantity,sell_amount,sell_price,id)
-
-def process_ZIGZAG_strategy(bots_list, buy_or_sell, prices_dict, strategy_params):
-  if bots_list:
-    user = bots_list[0]
-    name = bots_list[1]
-    access = bots_list[2]
-    symbol = bots_list[6]
-    volumefirst = bots_list[7]
-
-    interval = strategy_params['ZIGZAG'][0]
-    trend_len_for_sell = strategy_params['ZIGZAG'][1]
-    trend_len_for_buy = strategy_params['ZIGZAG'][2]
-    volume_value_first_order = strategy_params['ZIGZAG'][3]
-
-    #current_price = prices_dict[symbol]
-    current_price = prices_dict
+    num_simultaneuos_orders = strategy_params['PLUS'][6]
+    price_delta_percent = 0
+    if last_price > 0:
+      price_delta_percent = 100 - float(current_price) * 100 / float(last_price)
+    if price_delta_percent > 0 and price_delta_percent < percent_step_insurance_order:
+      plus_condition = False
+    print('Plus in charge: %r'%plus_condition)
+  if 'ZIGZAG' in strategy_params:
+    strategy_names.append('ZIGZAG')
     # ohlc_lists = get_Binance_last_24h_OHLC(symbol, interval)
     # close_list = [x[3] for x in ohlc_lists]
-
     #test
     close_list = [3550.1, 3500.1, 3450.1, 3400.1, 3350.1, 3300.1, 3250.1, 3200.1, 3450.1, 3500.1, 3550.1, 3650.1, 3750.1]
-
     ema_list = calculate_EMA(8, close_list[-9:])
     last_trend_data = determine_last_trend(len(ema_list), ema_list)
     uptrend = last_trend_data[0] #True if uptrend
     last_trend_len = last_trend_data[1]
     last_trend_list = ema_list[-last_trend_len:]
-    # last_price = price_list[-1]
-
-    symbol1 = PAIR_CUR_DICT[symbol][0]
-    symbol2 = PAIR_CUR_DICT[symbol][1]
-
-    info = FAccountInfo(user,symbol1,symbol2,current_price)
-    # print(info)
-    balance1 = info[0]
-    balance2 = info[1]
-    # last_price = info[2]
-    # last_order_quantity = info[3]
-    id = info[4]
-    # print('ID: %s'%id)
-    # profit = info[5]
-    sumvol = info[6]
-
-    if uptrend and last_trend_len > trend_len_for_sell and buy_or_sell == 'SELL':
-      print ('ZIGZAG sell')
-      order_quantity = round(float(sumvol), 8)
-      order_amount = round(order_quantity * current_price, 8)
-      FSendOrder('Close',user,'ZIGZAG',symbol1,symbol2,balance1,balance2,order_quantity,order_amount,current_price,id)
-      update_bots_num_orders(user, 1)
-    elif last_trend_len > trend_len_for_buy and buy_or_sell == 'BUY':
-      print ('ZIGZAG buy')
-      if volumefirst == 0:
-        #keys = get_keys_from_accesses(access)
-        balance1 = 0.1 #get_Binance_currency_balance(keys[0], keys[1], symbol1)
-        balance2 = 100 #get_Binance_currency_balance(keys[0], keys[1], symbol2)
-        # last_id = get_last_contract_id(user, 'ZIGZAG')
-        order_amount = volume_value_first_order
-        order_quantity = round(float(order_amount) / float(current_price), 8)
-        if balance2 >= order_amount:
-          balance1 = round(balance1 + order_quantity, 8)
-          balance2 = round(balance2 - order_amount, 8)
-          print ('Buy first time. ZIGZAG. Bal_1: %f; Bal_2: %f; Amount: %f; Quantity: %f'%(balance1, balance2, order_amount, order_quantity))
-          FSendOrder('Open',user,'ZIGZAG',symbol1,symbol2,balance1,balance2,order_quantity,order_amount,current_price, id)
-          update_bots_num_orders(user, 1)
-      else:
-        order_amount = volume_value_first_order
-        order_quantity = round(float(order_amount) / float(current_price), 8)
-        if balance2 >= order_amount:
-          balance1 = round(balance1 + order_quantity, 8)
-          balance2 = round(balance2 - order_amount, 8)
-          print ('Buy first time. ZIGZAG. Bal_1: %f; Bal_2: %f; Amount: %f; Quantity: %f'%(balance1, balance2, order_amount, order_quantity))
-          FSendOrder('Open',user,'ZIGZAG',symbol1,symbol2,balance1,balance2,order_quantity,order_amount,current_price,id)
-          num_orders += volumefirst
-          update_bots_num_orders(user, num_orders)
-
-def process_SPIRAL_strategy(bots_list, buy_or_sell, prices_dict, strategy_params):
-  if bots_list:
-    user = bots_list[0]
-    name = bots_list[1]
-    access = bots_list[2]
-    symbol = bots_list[6]
-    volumefirst = bots_list[7]
-
-    # prices_list = get_Binance_prices()
-    # for i in range(len(prices_list)):
-    # if prices_list[i]['symbol'] == symbol:
-    # current_price = prices_list[i]['price']
-    # break
-    # last_price = price_list[-1]
-    interval = strategy_params['SPIRAL'][0]
-    volume_value_first_order = strategy_params['SPIRAL'][1]
-
-    #current_price = prices_dict[symbol]
-    current_price = prices_dict
-
+    # trend_len_for_sell = 5
+    trend_len_for_buy = 8
+    if uptrend:
+      zigzag_condition = False
+    elif last_trend_len < trend_len_for_buy:
+      zigzag_condition = False
+    print('Zigzag in charge: %r'%zigzag_condition)
+  if 'SPIRAL' in strategy_params:
+    strategy_names.append('SPIRAL')
     # ohlc_lists = get_Binance_last_24h_OHLC(symbol, interval)
     # h_list = [x[1] for x in ohlc_lists]
     # l_list = [x[2] for x in ohlc_lists]
     # c_list = [x[3] for x in ohlc_lists]
-
-    #test
+    #test begin
     c_list = [3550.1, 3500.1, 3450.1, 3400.1, 3350.1, 3300.1, 3250.1, 3200.1, 3450.1, 3500.1, 3550.1, 3650.1, 3750.1]
     h_list = [x+55 for x in c_list]
     l_list = [x-30 for x in c_list]
-
+    #test end
     di_list = calculate_DI_plus_DI_minus(h_list, l_list, c_list)
     di_plus_list = di_list[0]
     di_minus_list = di_list[1]
+    if di_minus_list[-1] < 60:
+      spiral_condition = False
+    print('Spiral in charge: %r'%spiral_condition)
+  if 'WAVE' in strategy_params:
+    pass
 
-    symbol1 = PAIR_CUR_DICT[symbol][0]
-    symbol2 = PAIR_CUR_DICT[symbol][1]
+  strategy_names_string = '; '.join(strategy_names)
 
-    info = FAccountInfo(user,symbol1,symbol2,current_price)
-    # print(info)
-    balance1 = info[0]
-    balance2 = info[1]
-    # last_price = info[2]
-    # last_order_quantity = info[3]
-    id = info[4]
-    # print('ID: %s'%id)
-    # profit = info[5]
-    sumvol = info[6]
+  if order_num_current >= max_num_orders:
+    plus_condition = False
+    zigzag_condition = False
+    spiral_condition = False
+  
+  if order_num_current == 0 and zigzag_condition and spiral_condition:
+    #keys = get_keys_from_accesses(access)
+    balance1 = 0.1 #get_Binance_currency_balance(keys[0], keys[1], symbol1)
+    balance2 = 100 #get_Binance_currency_balance(keys[0], keys[1], symbol2)
+    for i in range(num_simultaneuos_orders):
+      order_amount = volume_value_first_order
+      order_quantity = round(float(order_amount) / float(next_price), 8)
+      if balance2 >= order_amount:
+        balance1 = round(balance1 + order_quantity, 8)
+        balance2 = round(balance2 - order_amount, 8)
+        print ('Buy first time. Strategy: %s ; Bal_1: %f; Bal_2: %f; Amount: %f; Quantity: %f'%(strategy_names_string, balance1, balance2, order_amount, order_quantity))
+        order_num_current += 1
+        FSendOrder('Open',user,strategy_names_string,symbol1,symbol2,balance1,balance2,order_quantity,order_amount,next_price, id)
+        next_price = round(next_price - (next_price / 100 * percent_step_insurance_order), 8)
+    update_bots_num_orders(user, order_num_current)
+  elif plus_condition and zigzag_condition and spiral_condition:
+    num_orders = 0
+    for i in range(num_simultaneuos_orders):
+      order_quantity = round(float(last_order_quantity) + (float(last_order_quantity) / 100 * float(martingale)), 8)
+      order_amount = round(float(order_quantity) * float(current_price), 8)
+      if balance2 >= order_amount:
+        balance1 = round(float(balance1) + float(order_quantity), 8)
+        balance2 = round(float(balance2) - float(order_amount), 8)
+        print ('Buy next. Strategy: %s ; Bal_1: %f; Bal_2: %f; Amount: %f; Quantity: %f'%(strategy_names_string, balance1, balance2, order_amount, order_quantity))
+        num_orders += 1
+        FSendOrder('Open',user,strategy_names_string,symbol1,symbol2,balance1,balance2,order_quantity,order_amount,next_price,id)
+        next_price = round(next_price - (next_price / 100 * percent_step_insurance_order), 8)
+    num_orders += order_num_current
+    update_bots_num_orders(user, num_orders)
 
-    if di_plus_list[-1] > 60 and buy_or_sell == 'SELL':
-      print ('SPIRAL sell')
-      # strategy_params['SPIRAL'][0] = 0
-      # update_strategy_params('strategysell', strategy_json_str, user)
-      order_quantity = round(float(sumvol), 8)
-      order_amount = round(order_quantity * current_price, 8)
-      FSendOrder('Close',user,'SPIRAL',symbol1,symbol2,balance1,balance2,order_quantity,order_amount,current_price,id)
-    elif di_minus_list[-1] > 60 and buy_or_sell == 'BUY':
-      print ('SPIRAL buy')
-      if volumefirst == 0:
-        #keys = get_keys_from_accesses(access)
-        balance1 = 0.1 #get_Binance_currency_balance(keys[0], keys[1], symbol1)
-        balance2 = 100 #get_Binance_currency_balance(keys[0], keys[1], symbol2)
-        # last_id = get_last_contract_id(user, 'SPIRAL')
-        order_amount = volume_value_first_order
-        order_quantity = round(float(order_amount) / float(current_price), 8)
-        if balance2 >= order_amount:
-          balance1 = round(balance1 + order_quantity, 8)
-          balance2 = round(balance2 - order_amount, 8)
-          print ('Buy first time. SPIRAL. Bal_1: %f; Bal_2: %f; Amount: %f; Quantity: %f'%(balance1, balance2, order_amount, order_quantity))
-          FSendOrder('Open',user,'SPIRAL',symbol1,symbol2,balance1,balance2,order_quantity,order_amount,current_price,id)
-          update_bots_num_orders(user, 1)
-      else:
-        order_amount = volume_value_first_order
-        order_quantity = round(float(order_amount) / float(current_price), 8)
-        if balance2 >= order_amount:
-          balance1 = round(balance1 + order_quantity, 8)
-          balance2 = round(balance2 - order_amount, 8)
-          print ('Buy first time. SPIRAL. Bal_1: %f; Bal_2: %f; Amount: %f; Quantity: %f'%(balance1, balance2, order_amount, order_quantity))
-          FSendOrder('Open',user,'SPIRAL',symbol1,symbol2,balance1,balance2,order_quantity,order_amount,current_price,id)
-          num_orders += volumefirst
-          update_bots_num_orders(user, num_orders)
+def process_SELL_strategy(bots_list, prices_dict, strategy_params):
+  #'name', 'symbol', 'user','access', 'deal', 'status', 'timeframe', 'strategybuy','strategysell', 'enabled'
+  name = bots_list[0]
+  symbol = bots_list[1]
+  user = bots_list[2]
+  access = bots_list[3]
+  deal = bots_list[4]
+  status = bots_list[5]
+  timeframe = bots_list[6]
+  strategybuy = bots_list[7]
+  order_num_current = bots_list[10]
+  max_num_orders = bots_list[11]
+  volume_value_first_order = bots_list[12]
+  # strategysell = bots_list[8]
 
-def process_WAVE_strategy(buy_or_sell, price_list):
-  pass
+  #current_price = prices_dict[symbol]
+  current_price = prices_dict
+  next_price = current_price
+  
+  num_simultaneuos_orders = 1
+  
+  strategy_names = []
+  
+  #PLUS
+  plus_condition = True
+  percent_step_insurance_order = 0
+  martingale = 0
+  
+  #ZIGZAG
+  zigzag_condition = True
+  
+  #SPIRAL
+  spiral_condition = True
+  
+  symbol1 = PAIR_CUR_DICT[symbol][0]
+  symbol2 = PAIR_CUR_DICT[symbol][1]
+  
+  info = FAccountInfo(user,symbol1,symbol2,current_price)
+  # print(info)
+  balance1 = info[0]
+  balance2 = info[1]
+  last_price = info[2]
+  last_order_quantity = info[3]
+  id = info[4]
+  profit = info[5]
+  sumvol = info[6]
+
+  if 'PLUS' in strategy_params:
+    strategy_names.append('PLUS')
+    takeprofit = strategy_params['PLUS'][0]
+    stoploss = strategy_params['PLUS'][1]
+    trailing_sell = strategy_params['PLUS'][2]
+    trailing_buy = strategy_params['PLUS'][3]
+    percent_step_insurance_order = strategy_params['PLUS'][4]
+    martingale = strategy_params['PLUS'][5]
+    num_simultaneuos_orders = strategy_params['PLUS'][6]
+    price_delta_percent = 0
+    if last_price > 0:
+      price_delta_percent = 100 - float(current_price) * 100 / float(last_price)
+    neg_takeprofit = takeprofit * -1
+    if price_delta_percent > neg_takeprofit:
+      plus_condition = False
+    print('Plus in charge: %r'%plus_condition)
+  if 'ZIGZAG' in strategy_params:
+    strategy_names.append('ZIGZAG')
+    # ohlc_lists = get_Binance_last_24h_OHLC(symbol, interval)
+    # close_list = [x[3] for x in ohlc_lists]
+    #test
+    close_list = [3550.1, 3500.1, 3450.1, 3400.1, 3350.1, 3300.1, 3250.1, 3200.1, 3450.1, 3500.1, 3550.1, 3650.1, 3750.1]
+    ema_list = calculate_EMA(8, close_list[-9:])
+    last_trend_data = determine_last_trend(len(ema_list), ema_list)
+    uptrend = last_trend_data[0] #True if uptrend
+    last_trend_len = last_trend_data[1]
+    last_trend_list = ema_list[-last_trend_len:]
+    trend_len_for_sell = 5
+    # trend_len_for_buy = 8
+    if not uptrend:
+      zigzag_condition = False
+    elif last_trend_len < trend_len_for_sell:
+      zigzag_condition = False
+    print('Zigzag in charge: %r'%zigzag_condition)
+  if 'SPIRAL' in strategy_params:
+    strategy_names.append('SPIRAL')
+    # ohlc_lists = get_Binance_last_24h_OHLC(symbol, interval)
+    # h_list = [x[1] for x in ohlc_lists]
+    # l_list = [x[2] for x in ohlc_lists]
+    # c_list = [x[3] for x in ohlc_lists]
+    #test begin
+    c_list = [3550.1, 3500.1, 3450.1, 3400.1, 3350.1, 3300.1, 3250.1, 3200.1, 3450.1, 3500.1, 3550.1, 3650.1, 3750.1]
+    h_list = [x+55 for x in c_list]
+    l_list = [x-30 for x in c_list]
+    #test end
+    di_list = calculate_DI_plus_DI_minus(h_list, l_list, c_list)
+    di_plus_list = di_list[0]
+    # di_minus_list = di_list[1]
+    if di_plus_list[-1] < 60:
+      spiral_condition = False
+    print('Spiral in charge: %r'%spiral_condition)
+  if 'WAVE' in strategy_params:
+    pass
+
+  strategy_names_string = '; '.join(strategy_names)
+
+  if plus_condition and zigzag_condition and spiral_condition:
+    sell_price = current_price
+    sell_quantity = sumvol
+    sell_amount = round(float(sell_quantity) * float(sell_price), 8)
+    balance1 = round(float(balance1) - float(sell_quantity), 8)
+    balance2 = round(float(balance2) + float(sell_amount), 8)
+    update_bots_num_orders(user, 0)
+    FSendOrder('Close',user,strategy_names_string,symbol1,symbol2,balance1,balance2,sell_quantity,sell_amount,sell_price,id)
 
 if __name__ == '__main__':
-  #strategies_dict = {"SPIRAL" : [3,0.15], "WAVE" : [10,5,6], "ZIGZAG" : [3, 5, 8, 0.15], "PLUS" : [1.0, 0.30, 0.20, 0.15, 1.00, 5, 7, 2]}
+  #strategies_dict = {"ZIGZAG" : [], "PLUS" : [2.0, 2.0, 1.0, 1.0, 3.0, 5.0, 2]}
   #strategies_dict = {"SPIRAL" : [3,0.15], "WAVE" : [10,5,6], "ZIGZAG" : [3, 5, 8, 0.15]}
-  #PLUS (Д 1,00;мД 0,30;Д Tri 0,20;СО 0,0015;шСО 1,00;уСО 5;кСО 7;каСО 2)
+  #PLUS (Д 1,00 (% takeprofit);мД 0,30 (% stoploss);Д Tri 0,20(% trailing stop); СО Tri (% trailing buy); шСО 1,00 (% percent_step_insurance_order); уСО 5 (% martingale); каСО 2 (num_simultaneuos_orders))
   #PLUS (profit 1,00;мД 0,30;Д Tri 0,20;volume_value_first_order 0,0015;percent_step_insurance_order 1,00;martingale 5;max_num_orders 7;num_simultaneuos_orders 2; volumefirst 0)
   prices = [3550.1, 3500.1, 3450.1, 3400.1, 3350.1, 3300.1, 3250.1, 3200.1, 3450.1, 3500.1, 3550.1, 3650.1, 3750.1]
   price_gen = (x for x in range(len(prices)))
@@ -716,23 +735,15 @@ if __name__ == '__main__':
       # for i in range(len(prices_list)):
       # prices_dict.update({prices_list[i]['symbol'] : prices_list[i]['price']})
       for i in range(len(bots_list)):
-        strategybuy_dict = json.loads(bots_list[i][4])
-        # print(bots_list[i][4])
-        strategysell_dict = json.loads(bots_list[i][5])
+        # print(bots_list[i][7])
         index = next(price_gen)
         print ('Current price: %s'%prices[index])
-        if 'SPIRAL' in strategybuy_dict:
-          process_SPIRAL_strategy(bots_list[i], 'BUY', prices[index], strategybuy_dict)
-        if 'WAVE' in strategybuy_dict:
-          pass
-        if 'ZIGZAG' in strategybuy_dict:
-          process_ZIGZAG_strategy(bots_list[i], 'BUY', prices[index], strategybuy_dict)
-        if 'PLUS' in strategybuy_dict:
-          process_PLUS_strategy(bots_list[i], prices[index], strategybuy_dict)
-        if 'SPIRAL' in strategysell_dict:
-          process_SPIRAL_strategy(bots_list[i], 'SELL', prices[index], strategysell_dict)
-        if 'WAVE' in strategysell_dict:
-          pass
-        if 'ZIGZAG' in strategysell_dict:
-          process_ZIGZAG_strategy(bots_list[i], 'SELL', prices[index], strategysell_dict)
+        if bots_list[i][7]:
+          print ('Process buy')
+          strategybuy_dict = json.loads(bots_list[i][7])
+          process_BUY_strategy(bots_list[i], prices[index], strategybuy_dict)
+        if bots_list[i][8]:
+          print ('Process sell')
+          strategysell_dict = json.loads(bots_list[i][8])
+          process_SELL_strategy(bots_list[i], prices[index], strategysell_dict)
     time.sleep(5)
