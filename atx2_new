@@ -669,6 +669,12 @@ def process_SELL_strategy(bots_list, prices_dict, strategy_params):
     neg_takeprofit = takeprofit * -1
     if price_delta_percent > neg_takeprofit:
       plus_condition = False
+    if trailing_sell and price_delta_percent > neg_takeprofit:
+      new_stoploss = price_delta_percent + stoploss
+      strategy_params['PLUS'][1] = new_stoploss
+      update_strategy_params(strategysell, strategy_params, user)
+    if price_delta_percent > stoploss:
+      plus_condition = True
     print('Plus in charge: %r'%plus_condition)
   if 'ZIGZAG' in strategy_params:
     strategy_names.append('ZIGZAG')
